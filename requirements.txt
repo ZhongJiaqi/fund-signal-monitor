@@ -1,0 +1,4 @@
+# 基金加仓信号监控 运行依赖
+akshare>=1.18    # A 股基金净值 / 指数行情取数
+pandas>=2.0      # 数据处理
+requests>=2.28   # Server 酱推送 + VIX 取数

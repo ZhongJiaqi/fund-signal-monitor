@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd 配置模板。复制为 com.<你的标识>.fund-signal-monitor.plist,
+  把下面所有 /path/to/fund-signal-monitor 改成你的项目绝对路径,放到:
+    ~/Library/LaunchAgents/com.<你的标识>.fund-signal-monitor.plist
+  然后:
+    launchctl load ~/Library/LaunchAgents/com.<你的标识>.fund-signal-monitor.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.example.fund-signal-monitor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/fund-signal-monitor/.venv/bin/python</string>
+        <string>/path/to/fund-signal-monitor/monitor.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/fund-signal-monitor</string>
+
+    <!-- 代理:若 VIX 数据源(Yahoo Finance)在你所在地区需代理,填本地代理地址;否则删除整个 EnvironmentVariables 块 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>http_proxy</key>
+        <string>http://127.0.0.1:PORT</string>
+        <key>https_proxy</key>
+        <string>http://127.0.0.1:PORT</string>
+    </dict>
+
+    <!-- 每个交易日 10:00 跑一次(A 股开市 30 分钟后);非交易日脚本自行安静退出 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/fund-signal-monitor/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/fund-signal-monitor/launchd.err.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
