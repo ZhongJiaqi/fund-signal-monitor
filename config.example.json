@@ -1,11 +1,11 @@
 {
-  "_comment": "复制本文件为 config.json（已 gitignore）填入你自己要监控的基金。dividend_assets 走累计净值 + MA120/MA250 三档信号；shortma_assets 走单位净值 + MA20 单档信号。下方为示例基金，请替换。",
+  "_comment": "复制本文件为 config.json（已 gitignore）填入你自己要监控的基金。dividend_assets 走累计净值 + MA120/MA250 三档信号；shortma_assets 走单位净值 + MA20 单档信号。sector 字段可选，仅 shortma 卡片渲染时作为方括号板块标签展示（如 [电网设备]），留空则不展示。下方为示例基金，请替换。",
   "dividend_assets": [
     { "fund_code": "510300", "fund_name": "沪深300ETF（示例）" },
     { "fund_code": "510500", "fund_name": "中证500ETF（示例）" }
   ],
   "shortma_assets": [
-    { "fund_code": "159915", "fund_name": "创业板ETF（示例）" },
-    { "fund_code": "588000", "fund_name": "科创50ETF（示例）" }
+    { "fund_code": "159915", "fund_name": "创业板ETF（示例）", "sector": "创业板" },
+    { "fund_code": "588000", "fund_name": "科创50ETF（示例）", "sector": "科创板" }
   ]
 }

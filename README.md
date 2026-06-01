@@ -45,13 +45,13 @@ $EDITOR .env
     { "fund_code": "510300", "fund_name": "沪深300ETF（示例）" }
   ],
   "shortma_assets": [
-    { "fund_code": "159915", "fund_name": "创业板ETF（示例）" }
+    { "fund_code": "159915", "fund_name": "创业板ETF（示例）", "sector": "创业板" }
   ]
 }
 ```
 
 - `dividend_assets`:走累计净值 + MA120/MA250 三档信号。
-- `shortma_assets`:走单位净值 + MA20 单档信号。
+- `shortma_assets`:走单位净值 + MA20 单档信号。可选 `sector` 字段,卡片渲染时作为方括号板块标签(如 `` `159915` [创业板]创业板ETF ``)展示;留空或省略则不展示。
 - 任一通道留空 `[]` 即关闭。`config.json` 已 gitignore,不会被提交;`config.example.json` 是模板。
 
 > NDX/VIX 通道默认开启(无需配置基金);若不需要可在 `core/runner.py` 中跳过 `process_ndx`。VIX 阈值与 MA120 两档回撤比例定义在 `core/signals.py` 顶部常量,按需修改。

@@ -95,11 +95,19 @@ def with_retry(
 class Asset:
     fund_code: str       # 基金代码
     fund_name: str       # 基金简称
+    sector: str = ''     # 板块/方向标签(如"电网设备"、"CPO"),空字符串 = 不展示
 
 
 def _assets_from_config(cfg: dict, key: str) -> list[Asset]:
     """把 config 里的基金条目构建成 Asset 列表(纯函数,无 IO)。"""
-    return [Asset(fund_code=a['fund_code'], fund_name=a['fund_name']) for a in cfg.get(key, [])]
+    return [
+        Asset(
+            fund_code=a['fund_code'],
+            fund_name=a['fund_name'],
+            sector=a.get('sector', ''),
+        )
+        for a in cfg.get(key, [])
+    ]
 
 
 # 基金列表来自 config.json(gitignored)/ config.example.json(committed),不硬编码。

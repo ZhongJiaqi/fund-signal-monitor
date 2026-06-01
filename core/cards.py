@@ -291,8 +291,9 @@ def build_shortma_card_md(
     for asset, r in sorted_results:
         close = r.get('close')
         state_cell = _render_shortma_state_cell(r, trading_dates, today)
+        sector_tag = f'[{asset.sector}]' if asset.sector else ''
         body.append(
-            f'| `{asset.fund_code}` {asset.fund_name} '
+            f'| `{asset.fund_code}` {sector_tag}{asset.fund_name} '
             f'| `{_pct_diff(close, r.get("ma20"))}` '
             f'| {state_cell} |'
         )
