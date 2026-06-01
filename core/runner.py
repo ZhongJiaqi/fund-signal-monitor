@@ -219,7 +219,14 @@ def process_ndx(prev_state: dict, log: logging.Logger) -> dict:
     return out
 
 
-def main(today: Optional[date] = None) -> int:
+def main(today: Optional[date] = None, dry_run: bool = False) -> int:
+    """主流程入口。
+
+    dry_run=True 时阻断 5 类副作用:Server 酱推送 / macOS 通知 / save_state /
+    latest_alert_*.md 文件写入 / latest_alert_errors.md。其余照常(取数、
+    history CSV 缓存、trading_calendar 缓存、run.log)。stdout 显式 [DRY-RUN]
+    前缀,每通道标注"会推 / 不会推"。
+    """
     # 第一步:准备代理环境(给 Yahoo 用 _ORIG_PROXIES,清空 env 给 akshare 直连)
     setup_proxy_env()
 
@@ -228,7 +235,10 @@ def main(today: Optional[date] = None) -> int:
 
     log = get_logger()
     today = today or datetime.now().date()
-    log.info(f'====== 运行开始 {today} ======')
+    log.info(f'====== 运行开始 {today}{" [DRY-RUN]" if dry_run else ""} ======')
+
+    if dry_run:
+        print('[DRY-RUN] 不真发 / 不耗 Server 酱额度 / 不写 state.json')
 
     # 交易日历:一次加载(优先本地缓存,7 天失效),复用给 is_a_share_trading_day + compute_active_days
     trading_dates: "set[date]" = set()
@@ -310,7 +320,8 @@ def main(today: Optional[date] = None) -> int:
         'signal': ndx_result['signal'],
         'errors': ndx_result['errors'],
     }
-    save_state(state)
+    if not dry_run:
+        save_state(state)
 
     env = load_env()
     sendkey = env.get('SERVERCHAN_SENDKEY', '')
@@ -326,14 +337,20 @@ def main(today: Optional[date] = None) -> int:
 
     if has_any_dividend:
         md = build_dividend_card_md(today, all_dividend_results, max_asof, trading_dates)
-        print(md)
-        (ROOT / 'latest_alert_dividend.md').write_text(md, encoding='utf-8')
         title = f'红利低波 · {today}'
-        send_macos_notification(
-            title=title,
-            message=';'.join(fired_short) or '当前仍处于加仓窗口',
-        )
-        send_serverchan(sendkey, title, md, log)
+        if dry_run:
+            print(f'\n[DRY-RUN] 红利低波 会推:{title}')
+            print(md)
+        else:
+            print(md)
+            (ROOT / 'latest_alert_dividend.md').write_text(md, encoding='utf-8')
+            send_macos_notification(
+                title=title,
+                message=';'.join(fired_short) or '当前仍处于加仓窗口',
+            )
+            send_serverchan(sendkey, title, md, log)
+    elif dry_run:
+        print('\n[DRY-RUN] 红利低波 不会推(无信号事件)')
 
     # ----- 通道 2:科技(统一推送,合并卡)-----
     shortma_has_first = any(r['fired_first'] for _, r in all_shortma_results)
@@ -346,28 +363,45 @@ def main(today: Optional[date] = None) -> int:
 
     if shortma_has_any:
         md = build_shortma_card_md(today, all_shortma_results, shortma_max_asof, trading_dates)
-        print()
-        print(md)
-        (ROOT / 'latest_alert_shortma.md').write_text(md, encoding='utf-8')
         title = f'科技 · {today}'
-        send_macos_notification(
-            title=title,
-            message=';'.join(shortma_fired_short) or '当前仍处于跌破 MA20 窗口',
-        )
-        send_serverchan(sendkey, title, md, log)
+        if dry_run:
+            print(f'\n[DRY-RUN] 科技 会推:{title}')
+            print(md)
+        else:
+            print()
+            print(md)
+            (ROOT / 'latest_alert_shortma.md').write_text(md, encoding='utf-8')
+            send_macos_notification(
+                title=title,
+                message=';'.join(shortma_fired_short) or '当前仍处于跌破 MA20 窗口',
+            )
+            send_serverchan(sendkey, title, md, log)
+    elif dry_run:
+        print('\n[DRY-RUN] 科技 不会推(无信号事件)')
 
     # ----- 通道 3:纳指(VIX 触发才推)-----
     if ndx_result['fired']:
         md = build_ndx_card_md(today, ndx_result)
-        print()
-        print(md)
-        (ROOT / 'latest_alert_ndx.md').write_text(md, encoding='utf-8')
         title = f'纳指 · {today}'
-        send_macos_notification(
-            title=title,
-            message=f'VIX {fmt_num(ndx_result["vix"], 2)} 突破 {VIX_THRESHOLD:.0f}',
-        )
-        send_serverchan(sendkey, title, md, log)
+        if dry_run:
+            print(f'\n[DRY-RUN] 纳指 会推:{title}')
+            print(md)
+        else:
+            print()
+            print(md)
+            (ROOT / 'latest_alert_ndx.md').write_text(md, encoding='utf-8')
+            send_macos_notification(
+                title=title,
+                message=f'VIX {fmt_num(ndx_result["vix"], 2)} 突破 {VIX_THRESHOLD:.0f}',
+            )
+            send_serverchan(sendkey, title, md, log)
+    elif dry_run:
+        vix_v = ndx_result.get('vix')
+        if vix_v is None:
+            reason = 'VIX 未取到'
+        else:
+            reason = f'VIX {fmt_num(vix_v, 2)} < {VIX_THRESHOLD:.0f}'
+        print(f'\n[DRY-RUN] 纳指 不会推({reason})')
 
     # ----- 无触发时终端简短状态 -----
     if (not has_any_dividend
@@ -403,8 +437,12 @@ def main(today: Optional[date] = None) -> int:
             '',
             '排查:`tail -50 run.log`,或 REPL 直接调 `fetch_fund_cumulative_nav(code)` 看 traceback。',
         ])
-        (ROOT / 'latest_alert_errors.md').write_text(err_md, encoding='utf-8')
-        log.warning(f'取数失败 {len(fetch_errors)} 项,已写 latest_alert_errors.md(未推送)')
+        if dry_run:
+            print('\n[DRY-RUN] 取数失败诊断(不写 latest_alert_errors.md):')
+            print(err_md)
+        else:
+            (ROOT / 'latest_alert_errors.md').write_text(err_md, encoding='utf-8')
+            log.warning(f'取数失败 {len(fetch_errors)} 项,已写 latest_alert_errors.md(未推送)')
 
     log.info('====== 运行结束 ======')
     return 0

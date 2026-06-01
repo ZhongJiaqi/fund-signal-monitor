@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **数据未取到一律标"未取到",不编造**
 - **不显示加仓的具体金额**。dividend 通道只显示相对"X 份",shortma / ndx 不显示份数
 - **Server 酱免费版每天 5 条额度上限**。改动涉及推送内容/触发逻辑时:
-  - 先 dry-run 生成最终 markdown 检视,确认再发真实推送
+  - **先跑 `python monitor.py --dry-run`**(标准入口):用真实数据生成最终 markdown 但不真发、不耗额度、不写 state.json,确认再发真实推送
   - 不要为测试触发额外推送(浪费当日额度 + 误发消息)
   - 正常一天 1–3 条(三通道各最多 1 条),远低于上限
 
@@ -64,6 +64,9 @@ akshare 内部 `requests` 不带 timeout,某数据源接口偶尔让脚本挂死
 ## 常用命令
 
 ```bash
+# 预览(用真实数据生成会推的内容,但不真发、不耗额度、不写 state.json)
+.venv/bin/python monitor.py --dry-run
+
 # 运行(手动,会真实推送)
 .venv/bin/python monitor.py
 

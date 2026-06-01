@@ -91,9 +91,25 @@ import requests  # noqa: F401
 import time  # noqa: F401
 
 
+def _parse_args(argv: list[str] | None = None):
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog='monitor.py',
+        description='基金加仓信号监控 · 三通道独立推送(红利低波 / 科技 / 纳指)',
+    )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='预览模式:不真发微信/不弹通知/不写 state.json/不写 latest_alert_*.md,'
+             '只在 stdout 显示会推送的内容。改推送内容前先跑这个。',
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == '__main__':
+    args = _parse_args()
     try:
-        sys.exit(main())
+        sys.exit(main(dry_run=args.dry_run))
     except TimeoutError as e:
         get_logger().error(str(e))
         sys.exit(2)

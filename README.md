@@ -28,9 +28,14 @@ $EDITOR config.json
 cp .env.example .env
 $EDITOR .env
 
-# 3. 跑一次
+# 3. 先 dry-run 预览(不真发、不耗 Server 酱免费 5/天 额度)
+.venv/bin/python monitor.py --dry-run
+
+# 4. 确认无误后真实跑(会推到微信 + 弹 macOS 通知 + 写 state.json)
 .venv/bin/python monitor.py
 ```
+
+> 改推送内容/卡片格式/信号阈值时,**先 `--dry-run` 用真实数据预览一遍**再走真实推送 —— 避免误推、浪费当日额度。
 
 ## 配置 `config.json`
 
