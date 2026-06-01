@@ -40,10 +40,11 @@ def _pct_diff(close: Optional[float], base: Optional[float]) -> str:
 # ===== 规则文案 footer =====
 
 DIVIDEND_RULE_FOOTER = (
-    '> 规则:<br>'
-    '信号一(净值 < MA250)1 份<br>'
-    '信号二(净值 < MA120 × (1 - 6%))1 份<br>'
-    '信号三(净值 < MA120 × (1 - 12%))2 份'
+    '**规则**\n'
+    '\n'
+    '- 信号一(净值 < MA250)1 份\n'
+    '- 信号二(净值 < MA120 × (1 - 6%))1 份\n'
+    '- 信号三(净值 < MA120 × (1 - 12%))2 份'
 )
 
 SHORTMA_RULE_FOOTER = '> 规则:净值 < MA20 视为短期超跌'
@@ -136,13 +137,11 @@ def _render_dividend_state_cell(r: dict, trading_dates: "set[date] | None", toda
     if kind == 'first':
         sig_keys = sorted(r.get('fired_first') or [], key=lambda k: _SIG_DEPTH.get(k, 99))
         sig_key = sig_keys[-1]
-        n = SIGNAL_SHARES[sig_key]
-        return f'{emoji} **{_sig_label(sig_key)}首次激活** · 加仓 **{n} 份**'
+        return f'{emoji} **{_sig_label(sig_key)}首次激活**'
 
     if kind == 'new_low':
         sig_keys = sorted(r.get('fired_new_low') or [], key=lambda k: _SIG_DEPTH.get(k, 99))
         sig_key = sig_keys[-1]
-        n = SIGNAL_SHARES[sig_key]
         m = meta.get(sig_key) or {}
         days = None
         activated_at = m.get('activated_at')
@@ -150,7 +149,7 @@ def _render_dividend_state_cell(r: dict, trading_dates: "set[date] | None", toda
             d = compute_active_days(activated_at, today, cal)
             days = d if d > 0 else None
         days_str = f' · 已激活 {days} 天' if days else ''
-        return f'{emoji} **{_sig_label(sig_key)}探底新低**{days_str} · 加仓 **{n} 份**'
+        return f'{emoji} **{_sig_label(sig_key)}探底新低**{days_str}'
 
     if kind == 'still_active':
         sig_keys = sorted(r.get('fired_still_active') or [], key=lambda k: _SIG_DEPTH.get(k, 99))
@@ -162,16 +161,13 @@ def _render_dividend_state_cell(r: dict, trading_dates: "set[date] | None", toda
             d = compute_active_days(activated_at, today, cal)
             days = d if d > 0 else None
         days_str = f'**第 {days} 天**' if days else '中'
-        lowest = m.get('lowest_close')
-        lowest_str = f' · 本期最低 `{lowest:.4f}`' if lowest is not None else ''
         nt = next_threshold(close, ma120, ma250, sigs)
         next_str = ''
         if nt is not None and close is not None:
             label, price = nt
             drop = (1 - price / close) * 100
-            next_n = SIGNAL_NEXT_SHARES.get(label, 1)
-            next_str = f' · 再跌 {drop:.1f}% 触发{label} +{next_n} 份'
-        return f'{emoji} {_sig_label(sig_key)}激活{days_str}{lowest_str}{next_str}'
+            next_str = f' · 再跌 {drop:.1f}% 触发{label}'
+        return f'{emoji} {_sig_label(sig_key)}激活{days_str}{next_str}'
 
     if kind == 'near':
         nt = next_threshold(close, ma120, ma250, sigs)
@@ -220,9 +216,7 @@ def _render_shortma_state_cell(r: dict, trading_dates: "set[date] | None", today
             d = compute_active_days(activated_at, today, cal)
             days = d if d > 0 else None
         days_str = f'**第 {days} 天**' if days else '中'
-        lowest = meta.get('lowest_close')
-        lowest_str = f' · 本期最低 `{lowest:.4f}`' if lowest is not None else ''
-        return f'{emoji} 跌破 MA20 {days_str}{lowest_str}'
+        return f'{emoji} 跌破 MA20 {days_str}'
 
     if kind == 'near':
         if close is not None and ma20 is not None:
