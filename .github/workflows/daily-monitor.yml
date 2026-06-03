@@ -1,0 +1,127 @@
+# 每日 10:00 北京(02:00 UTC)在 GitHub-hosted runner 上跑 monitor.py,
+# 取代本地 macOS launchd,彻底解耦电脑唤醒 — 推送不再受睡眠/带电脑出门影响。
+#
+# 当前阶段:仅手动触发(workflow_dispatch),默认 dry-run。
+# 验证 OK 后:取消 schedule 注释,启用工作日 10:00 自动跑(默认走生产路径)。
+#
+# 凭证:仓库 Settings → Secrets and variables → Actions 配两个 secret
+#   SERVERCHAN_SENDKEY  — 从本地 .env 复制
+#   FUND_CONFIG_B64     — 本地 `base64 -i config.json | pbcopy` 后粘贴
+#
+# state.json 持久化:actions/cache,key 带 run_id 保证每次写新版,restore-keys 拿最近一次
+
+name: Daily Monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '运行模式'
+        required: true
+        default: 'dry-run'
+        type: choice
+        options:
+          - dry-run
+          - production
+  # 灰度验证 OK 后取消下面三行注释 — 工作日北京 10:00 自动跑生产
+  # GitHub cron 整点常有 5-15 分钟延迟,接受
+  # schedule:
+  #   - cron: '0 2 * * 1-5'
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Restore state.json from cache
+        id: restore-state
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: state-json-${{ github.run_id }}
+          restore-keys: |
+            state-json-
+
+      - name: Write secrets to files
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          FUND_CONFIG_B64: ${{ secrets.FUND_CONFIG_B64 }}
+        run: |
+          if [ -z "$SERVERCHAN_SENDKEY" ]; then
+            echo "::error::Secret SERVERCHAN_SENDKEY 未配置"
+            exit 1
+          fi
+          if [ -z "$FUND_CONFIG_B64" ]; then
+            echo "::error::Secret FUND_CONFIG_B64 未配置"
+            exit 1
+          fi
+          printf 'SERVERCHAN_SENDKEY=%s\n' "$SERVERCHAN_SENDKEY" > .env
+          printf '%s' "$FUND_CONFIG_B64" | base64 -d > config.json
+          if [ ! -s config.json ]; then
+            echo "::error::config.json 解码为空,检查 FUND_CONFIG_B64 是否粘错"
+            exit 1
+          fi
+          # 校验 JSON 合法
+          python -c "import json; json.load(open('config.json'))"
+          echo "Secrets ready (.env + config.json)"
+
+      - name: Determine run mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.mode }}"
+          else
+            # schedule 触发 = 生产 cron,默认真发
+            MODE="production"
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "==> Run mode: $MODE"
+
+      - name: Show env (debug, no secrets)
+        run: |
+          echo "Date(BJ): $(date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "Python: $(python --version)"
+          echo "akshare: $(python -c 'import akshare; print(akshare.__version__)')"
+          echo "Runner location hint: $(curl -s --max-time 3 https://ipinfo.io/country || echo unknown)"
+
+      - name: Run monitor
+        run: |
+          if [ "${{ steps.mode.outputs.mode }}" = "dry-run" ]; then
+            python monitor.py --dry-run
+          else
+            python monitor.py
+          fi
+
+      - name: Save state.json to cache (production only)
+        if: steps.mode.outputs.mode == 'production' && success()
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: state-json-${{ github.run_id }}
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ github.run_id }}
+          path: |
+            run.log
+            latest_alert_*.md
+            latest_alert_errors.md
+            state.json
+          retention-days: 7
+          if-no-files-found: ignore
