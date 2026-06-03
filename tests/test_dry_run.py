@@ -126,12 +126,60 @@ def test_dry_run_stdout_shows_fired_channels_with_title_and_md(dry_run_env, caps
 
 
 def test_production_path_unchanged_when_dry_run_false(dry_run_env):
-    """回归保护:dry_run=False(默认)时,推送/state/文件写入 全部按现行生产路径执行。"""
+    """回归保护:dry_run=False(默认)时,推送/state/文件写入 全部按现行生产路径执行。
+
+    fixture 场景:1 只 dividend 触发 + 1 只 shortma 国内触发 + 7 只海外全安全无事件。
+    推送计数 = 3(红利 1 + 国内科技 1 + 海外科技 1,海外是"每日固定播报"必推)。
+    纳指 VIX 17.0 < 30 不算。
+    """
     main(today=dry_run_env['today'], dry_run=False)
-    # 1 只 div 触发 + 1 只 shortma 触发 → 应至少 2 次 send_serverchan(纳指 VIX 低 不算)
-    assert dry_run_env['serverchan'].call_count == 2
-    assert dry_run_env['macos'].call_count == 2
+    assert dry_run_env['serverchan'].call_count == 3
+    assert dry_run_env['macos'].call_count == 3
     assert dry_run_env['save_state'].call_count == 1
     tmp = dry_run_env['tmp_path']
     assert (tmp / 'latest_alert_dividend.md').exists()
     assert (tmp / 'latest_alert_shortma.md').exists()
+    assert (tmp / 'latest_alert_shortma_overseas.md').exists()
+
+
+def test_overseas_pushes_daily_even_without_event(dry_run_env, capsys):
+    """红线:海外通道每天必推(用户拍板的"每日固定播报"规则,区别于国内"有事件才推")。
+
+    fixture 场景下海外 7 只全部 close 2.20 > MA20 2.0 → 0 个 fired_first/new_low/still_active 事件,
+    但仍必须推一条卡片(国内同条件不推)。dry-run stdout 应明确标注"(每日固定播报)"。
+    """
+    main(today=dry_run_env['today'], dry_run=True)
+    captured = capsys.readouterr()
+    assert '科技-海外 会推' in captured.out, '海外通道无事件时也必须推送(每日固定播报)'
+    assert '每日固定播报' in captured.out, 'dry-run stdout 必须明确标注是 "每日固定播报" 而非"有事件"'
+
+
+def test_overseas_skipped_when_all_fetches_fail(monkeypatch, dry_run_env, capsys):
+    """边界:海外 7 只全部取数失败 → 跳过推送(避免发"7 行未取到"的空卡片浪费 Server 酱额度)。"""
+    # 覆盖 fake_unit 让海外代码全部抛异常,国内代码保持原逻辑(避免影响其它断言)
+    from core.data_io import SHORTMA_ASSETS, SHORTMA_OVERSEAS_ASSETS
+
+    import pandas as pd
+    ma20_fire = pd.DataFrame({
+        'date': pd.date_range(start='2024-01-01', periods=20, freq='D').date,
+        'close': [2.0] * 19 + [1.85],
+    })
+    ma20_safe = pd.DataFrame({
+        'date': pd.date_range(start='2024-01-01', periods=20, freq='D').date,
+        'close': [2.0] * 19 + [2.20],
+    })
+
+    overseas_codes = {a.fund_code for a in SHORTMA_OVERSEAS_ASSETS}
+
+    def fake_unit_with_overseas_fail(code):
+        if code in overseas_codes:
+            raise RuntimeError(f'mocked overseas fetch failure for {code}')
+        return ma20_fire if code == SHORTMA_ASSETS[0].fund_code else ma20_safe
+
+    monkeypatch.setattr('core.runner.fetch_fund_unit_nav', fake_unit_with_overseas_fail)
+
+    main(today=dry_run_env['today'], dry_run=True)
+    captured = capsys.readouterr()
+    assert '科技-海外 不会推(7 只全部取数失败)' in captured.out, (
+        '海外全部 fetch 失败时必须跳过推送,而不是发空卡片'
+    )

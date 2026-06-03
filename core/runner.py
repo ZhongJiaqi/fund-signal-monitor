@@ -402,32 +402,35 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
     elif dry_run:
         print('\n[DRY-RUN] 科技-国内 不会推(无信号事件)')
 
-    # ----- 通道 2.5:科技-海外(独立推送一张卡,规则同国内)-----
+    # ----- 通道 2.5:科技-海外(每日固定播报,与国内规则不同)-----
+    # 国内 shortma 是"有事件才推",海外是"每日必推一张状态卡"(用户要求,
+    # 便于每天扫一眼海外持仓的相对 MA20 位置)。只在 7 只全部取数失败时
+    # 跳过推送,避免空卡片浪费 Server 酱额度。
     overseas_has_first = any(r['fired_first'] for _, r in all_overseas_results)
     overseas_has_new_low = any(r['fired_new_low'] for _, r in all_overseas_results)
     overseas_has_still = any(r['fired_still_active'] for _, r in all_overseas_results)
     overseas_has_any = overseas_has_first or overseas_has_new_low or overseas_has_still
+    overseas_has_data = any(r.get('close') is not None for _, r in all_overseas_results)
 
     overseas_asofs = [r['asof'] for _, r in all_overseas_results if r.get('asof')]
     overseas_max_asof = max(overseas_asofs) if overseas_asofs else '未取到'
 
-    if overseas_has_any:
+    if overseas_has_data:
         md = build_shortma_card_md(today, all_overseas_results, overseas_max_asof, trading_dates)
         title = f'科技-海外 · {today}'
+        macos_msg = ';'.join(overseas_fired_short) or '每日海外科技状态汇报'
         if dry_run:
-            print(f'\n[DRY-RUN] 科技-海外 会推:{title}')
+            tag = '(每日固定播报)' if not overseas_has_any else '(有事件)'
+            print(f'\n[DRY-RUN] 科技-海外 会推{tag}:{title}')
             print(md)
         else:
             print()
             print(md)
             (ROOT / 'latest_alert_shortma_overseas.md').write_text(md, encoding='utf-8')
-            send_macos_notification(
-                title=title,
-                message=';'.join(overseas_fired_short) or '当前仍处于跌破 MA20 窗口',
-            )
+            send_macos_notification(title=title, message=macos_msg)
             send_serverchan(sendkey, title, md, log)
     elif dry_run:
-        print('\n[DRY-RUN] 科技-海外 不会推(无信号事件)')
+        print('\n[DRY-RUN] 科技-海外 不会推(7 只全部取数失败)')
 
     # ----- 通道 3:纳指(VIX 触发才推)-----
     if ndx_result['fired']:
