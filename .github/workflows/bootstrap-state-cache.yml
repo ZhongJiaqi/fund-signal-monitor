@@ -1,0 +1,44 @@
+# 一次性引导脚本:把本地 state.json 写入 GitHub Actions cache,
+# 让 daily-monitor 首次 cron 不会因 cache miss 把"持续激活"误判成"首次激活"。
+#
+# 用法:
+#   1. 仓库 Secrets 加 STATE_JSON_SEED_B64 = `base64 -i state.json`
+#   2. gh workflow run bootstrap-state-cache.yml -R ZhongJiaqi/fund-signal-monitor
+#   3. 验证 cache 有了之后,可以删除本 workflow + 删除 STATE_JSON_SEED_B64 secret
+#
+# 不跑 monitor.py、不取数、不推送、不耗 Server 酱额度。仅 seed cache。
+
+name: Bootstrap State Cache (one-time)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Decode state.json from secret
+        env:
+          STATE_JSON_SEED_B64: ${{ secrets.STATE_JSON_SEED_B64 }}
+        run: |
+          if [ -z "$STATE_JSON_SEED_B64" ]; then
+            echo "::error::Secret STATE_JSON_SEED_B64 未配置"
+            exit 1
+          fi
+          printf '%s' "$STATE_JSON_SEED_B64" | base64 -d > state.json
+          if [ ! -s state.json ]; then
+            echo "::error::state.json 解码为空"
+            exit 1
+          fi
+          # 校验 JSON 合法
+          python3 -c "import json,sys; d=json.load(open('state.json')); print('schema_version:', d.get('schema_version')); print('assets:', list(d.get('assets',{}).keys())); print('shortma:', list(d.get('shortma_assets',{}).keys()))"
+
+      - name: Save state.json to cache
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: state-json-${{ github.run_id }}
+
+      - name: Confirm cache key
+        run: echo "Cache saved with key state-json-${{ github.run_id }}"
