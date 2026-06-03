@@ -33,6 +33,7 @@ from core.data_io import (
     FETCH_MAX_ATTEMPTS,
     ROOT,
     SHORTMA_ASSETS,
+    SHORTMA_OVERSEAS_ASSETS,
     fetch_fund_cumulative_nav,
     fetch_fund_unit_nav,
     fetch_ndx,
@@ -285,7 +286,7 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
             + (f' | 缺数: {",".join(result["errors"])}' if result['errors'] else '')
         )
 
-    # 短线 MA20 监控(4 只科技/半导体基金,单位净值口径)
+    # 短线 MA20 监控(国内科技,单位净值口径)
     new_shortma_state = {}
     all_shortma_results: list[tuple] = []
     shortma_fired_short: list[str] = []
@@ -306,6 +307,27 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
             tag = '跌破 MA20' if result['fired_first'] else 'MA20 期间新低'
             shortma_fired_short.append(f'{asset.fund_code}: {tag}')
 
+    # 短线 MA20 监控(海外 QDII,规则同上,独立推送一张卡)
+    new_overseas_state = {}
+    all_overseas_results: list[tuple] = []
+    overseas_fired_short: list[str] = []
+
+    for asset in SHORTMA_OVERSEAS_ASSETS:
+        prev = state.get('shortma_overseas_assets', {}).get(asset.fund_code, {})
+        result = process_shortma_asset(asset, prev, log)
+        new_overseas_state[asset.fund_code] = {
+            'asof': result['asof'],
+            'close': result['close'],
+            'ma20': result['ma20'],
+            'signal': result['signal'],
+            'signal_meta': result['signal_meta'],
+            'errors': result['errors'],
+        }
+        all_overseas_results.append((asset, result))
+        if result['fired_first'] or result['fired_new_low']:
+            tag = '跌破 MA20' if result['fired_first'] else 'MA20 期间新低'
+            overseas_fired_short.append(f'{asset.fund_code}: {tag}')
+
     # NDX/VIX 监控
     prev_ndx = state.get('ndx', {})
     ndx_result = process_ndx(prev_ndx, log)
@@ -313,6 +335,7 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
     state['last_run'] = datetime.now().isoformat(timespec='seconds')
     state['assets'] = new_assets_state
     state['shortma_assets'] = new_shortma_state
+    state['shortma_overseas_assets'] = new_overseas_state
     state['ndx'] = {
         'asof': ndx_result['asof'],
         'close': ndx_result['close'],
@@ -352,7 +375,7 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
     elif dry_run:
         print('\n[DRY-RUN] 红利低波 不会推(无信号事件)')
 
-    # ----- 通道 2:科技(统一推送,合并卡)-----
+    # ----- 通道 2:科技-国内(统一推送,合并卡)-----
     shortma_has_first = any(r['fired_first'] for _, r in all_shortma_results)
     shortma_has_new_low = any(r['fired_new_low'] for _, r in all_shortma_results)
     shortma_has_still = any(r['fired_still_active'] for _, r in all_shortma_results)
@@ -363,9 +386,9 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
 
     if shortma_has_any:
         md = build_shortma_card_md(today, all_shortma_results, shortma_max_asof, trading_dates)
-        title = f'科技 · {today}'
+        title = f'科技-国内 · {today}'
         if dry_run:
-            print(f'\n[DRY-RUN] 科技 会推:{title}')
+            print(f'\n[DRY-RUN] 科技-国内 会推:{title}')
             print(md)
         else:
             print()
@@ -377,7 +400,34 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
             )
             send_serverchan(sendkey, title, md, log)
     elif dry_run:
-        print('\n[DRY-RUN] 科技 不会推(无信号事件)')
+        print('\n[DRY-RUN] 科技-国内 不会推(无信号事件)')
+
+    # ----- 通道 2.5:科技-海外(独立推送一张卡,规则同国内)-----
+    overseas_has_first = any(r['fired_first'] for _, r in all_overseas_results)
+    overseas_has_new_low = any(r['fired_new_low'] for _, r in all_overseas_results)
+    overseas_has_still = any(r['fired_still_active'] for _, r in all_overseas_results)
+    overseas_has_any = overseas_has_first or overseas_has_new_low or overseas_has_still
+
+    overseas_asofs = [r['asof'] for _, r in all_overseas_results if r.get('asof')]
+    overseas_max_asof = max(overseas_asofs) if overseas_asofs else '未取到'
+
+    if overseas_has_any:
+        md = build_shortma_card_md(today, all_overseas_results, overseas_max_asof, trading_dates)
+        title = f'科技-海外 · {today}'
+        if dry_run:
+            print(f'\n[DRY-RUN] 科技-海外 会推:{title}')
+            print(md)
+        else:
+            print()
+            print(md)
+            (ROOT / 'latest_alert_shortma_overseas.md').write_text(md, encoding='utf-8')
+            send_macos_notification(
+                title=title,
+                message=';'.join(overseas_fired_short) or '当前仍处于跌破 MA20 窗口',
+            )
+            send_serverchan(sendkey, title, md, log)
+    elif dry_run:
+        print('\n[DRY-RUN] 科技-海外 不会推(无信号事件)')
 
     # ----- 通道 3:纳指(VIX 触发才推)-----
     if ndx_result['fired']:
@@ -406,11 +456,18 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
     # ----- 无触发时终端简短状态 -----
     if (not has_any_dividend
             and not shortma_has_any
+            and not overseas_has_any
             and not ndx_result['fired']):
         print(f'✅ {today} 今日无新加仓信号首次触发。')
         for line in dividend_text_lines:
             print(line)
         for asset, r in all_shortma_results:
+            close = r.get('close')
+            ma20 = r.get('ma20')
+            pos = _pct_diff(close, ma20)
+            err = f' | 缺数: {",".join(r["errors"])}' if r['errors'] else ''
+            print(f'  {asset.fund_code} {asset.fund_name[:24]}: 单位净值 {fmt_num(close, 4)} | MA20 {pos}{err}')
+        for asset, r in all_overseas_results:
             close = r.get('close')
             ma20 = r.get('ma20')
             pos = _pct_diff(close, ma20)
@@ -424,6 +481,9 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
         if r.get('errors'):
             fetch_errors.append(f'{asset.fund_code} {asset.fund_name}: {", ".join(r["errors"])}')
     for asset, r in all_shortma_results:
+        if r.get('errors'):
+            fetch_errors.append(f'{asset.fund_code} {asset.fund_name}: {", ".join(r["errors"])}')
+    for asset, r in all_overseas_results:
         if r.get('errors'):
             fetch_errors.append(f'{asset.fund_code} {asset.fund_name}: {", ".join(r["errors"])}')
     if ndx_result.get('errors'):

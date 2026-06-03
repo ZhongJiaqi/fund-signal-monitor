@@ -58,7 +58,7 @@ def dry_run_env(tmp_path, monkeypatch):
     monkeypatch.setattr('core.runner.save_state', save_state_mock)
     # load_state 返回空,让事件分类全走"首次激活"路径
     monkeypatch.setattr('core.runner.load_state', lambda: {
-        'assets': {}, 'shortma_assets': {}, 'ndx': {}
+        'assets': {}, 'shortma_assets': {}, 'shortma_overseas_assets': {}, 'ndx': {}
     })
     # SIGALRM 在测试环境会被多次 set/clear,跳过即可
     import signal as _signal

@@ -111,11 +111,13 @@ def _assets_from_config(cfg: dict, key: str) -> list[Asset]:
 
 
 # 基金列表来自 config.json(gitignored)/ config.example.json(committed),不硬编码。
-#   dividend_assets:累计净值 + MA120/MA250 三档信号
-#   shortma_assets :单位净值 + MA20 单档信号(高波动品种,不显示份数)
+#   dividend_assets         :累计净值 + MA120/MA250 三档信号
+#   shortma_assets          :单位净值 + MA20 单档信号(国内科技,高波动品种,不显示份数)
+#   shortma_overseas_assets :单位净值 + MA20 单档信号(海外 QDII,规则同 shortma,独立推送一卡)
 _config = load_config()
 ASSETS: list[Asset] = _assets_from_config(_config, 'dividend_assets')
 SHORTMA_ASSETS: list[Asset] = _assets_from_config(_config, 'shortma_assets')
+SHORTMA_OVERSEAS_ASSETS: list[Asset] = _assets_from_config(_config, 'shortma_overseas_assets')
 
 
 # ===== 取数 =====

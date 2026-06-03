@@ -43,6 +43,7 @@ from core.data_io import (  # noqa: F401
     LOG_PATH,
     ROOT,
     SHORTMA_ASSETS,
+    SHORTMA_OVERSEAS_ASSETS,
     STATE_PATH,
     cache_path,
     fetch_fund_cumulative_nav,
