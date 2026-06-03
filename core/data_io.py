@@ -240,67 +240,14 @@ def save_unit_history(asset: Asset, df) -> None:
 
 # ===== 状态 =====
 
-# ===== state.json schema 版本与迁移 =====
-
-CURRENT_SCHEMA_VERSION = 2
-
-
-def _migrate_state_v1_to_v2(state: dict) -> dict:
-    """v1 → v2 信号编号重排:
-
-    - v1.signal_3 (MA250) → v2.signal_1
-    - v1.signal_1 (MA120 -6%) → v2.signal_2
-    - v1.signal_2 (MA120 -12%) → v2.signal_3
-
-    signals dict 与 signal_meta dict 同步 rename。返回**新** dict,不修改入参。
-    """
-    rename_map = {'signal_1': 'signal_2', 'signal_2': 'signal_3', 'signal_3': 'signal_1'}
-
-    new_state = dict(state)
-    new_assets = {}
-    for code, asset in state.get('assets', {}).items():
-        new_asset = dict(asset)
-        old_signals = asset.get('signals', {}) or {}
-        new_asset['signals'] = {
-            new_key: old_signals.get(old_key, False)
-            for old_key, new_key in rename_map.items()
-        }
-        old_meta = asset.get('signal_meta', {}) or {}
-        new_meta = {
-            rename_map[old_key]: dict(meta)
-            for old_key, meta in old_meta.items()
-            if old_key in rename_map
-        }
-        new_asset['signal_meta'] = new_meta
-        new_assets[code] = new_asset
-    new_state['assets'] = new_assets
-    new_state['schema_version'] = CURRENT_SCHEMA_VERSION
-    return new_state
-
-
 def load_state() -> dict:
-    """读 state.json。若是 v1 schema,自动迁移到 v2 + 备份 + 写回。"""
+    """读 state.json。不存在则返回 fresh state。"""
     if not STATE_PATH.exists():
         return {'last_run': None, 'assets': {}}
-    raw = json.loads(STATE_PATH.read_text(encoding='utf-8'))
-    if raw.get('schema_version') == CURRENT_SCHEMA_VERSION:
-        return raw
-
-    # v1 → v2 迁移
-    import shutil
-    ts = int(datetime.now().timestamp())
-    backup = STATE_PATH.parent / f'state.json.bak.before-schema-v2.{ts}'
-    shutil.copy(STATE_PATH, backup)
-    migrated = _migrate_state_v1_to_v2(raw)
-    STATE_PATH.write_text(
-        json.dumps(migrated, ensure_ascii=False, indent=2, default=str),
-        encoding='utf-8',
-    )
-    return migrated
+    return json.loads(STATE_PATH.read_text(encoding='utf-8'))
 
 
 def save_state(state: dict) -> None:
-    state['schema_version'] = CURRENT_SCHEMA_VERSION
     STATE_PATH.write_text(
         json.dumps(state, ensure_ascii=False, indent=2, default=str),
         encoding='utf-8',
