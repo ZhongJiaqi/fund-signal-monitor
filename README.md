@@ -2,15 +2,16 @@
 
 每个交易日自动监控你关注的基金,触发预设加仓规则时推送到微信。**只做提醒,不下单。**
 
-监控对象、阈值完全由你的 `config.json` 决定,代码里不含任何具体基金。支持三类通道:
+监控对象、阈值完全由你的 `config.json` 决定,代码里不含任何具体基金。支持 4 类通道:
 
-| 通道 | 数据口径 | 信号 | 适用 |
-|---|---|---|---|
-| **dividend** | 累计净值(分红还原) | MA250 / MA120 三档 | 低波动、分红型,看中长期回撤 |
-| **shortma** | 单位净值 | MA20 单档(`close < MA20`) | 高波动品种,看短期超跌 |
-| **ndx**(可选) | 指数点位 + VIX | VIX 超阈值 | 借恐慌指数做美股恐慌加仓提醒 |
+| 通道 | 数据口径 | 信号 | 推送规则 | 适用 |
+|---|---|---|---|---|
+| **dividend** | 累计净值(分红还原) | MA250 / MA120 三档 | 有事件才推 | 低波动、分红型,看中长期回撤 |
+| **shortma**(国内) | 单位净值 | MA20 单档(`close < MA20`) | 有事件才推 | 国内高波动品种,看短期超跌 |
+| **shortma_overseas** | 单位净值 | MA20 单档 | **每日固定播报** | 海外 QDII / 跨境指数,每天扫一眼相对 MA20 位置 |
+| **ndx**(可选) | 指数点位 + VIX | VIX 超阈值(默认 30) | 仅 VIX 首次突破时推 | 借恐慌指数做美股恐慌加仓提醒 |
 
-三类各走**独立**的 Server 酱微信推送,互不合并。
+4 类各走**独立**的 Server 酱微信推送,互不合并。海外通道是唯一"无事件也推"的——做日常状态汇报;其余三通道只在状态变化时推。
 
 ## 快速开始
 
@@ -46,13 +47,17 @@ $EDITOR .env
   ],
   "shortma_assets": [
     { "fund_code": "159915", "fund_name": "创业板ETF（示例）", "sector": "创业板" }
+  ],
+  "shortma_overseas_assets": [
+    { "fund_code": "513100", "fund_name": "纳指ETF（示例）" }
   ]
 }
 ```
 
-- `dividend_assets`:走累计净值 + MA120/MA250 三档信号。
-- `shortma_assets`:走单位净值 + MA20 单档信号。可选 `sector` 字段,卡片渲染时作为方括号板块标签(如 `` `159915` [创业板]创业板ETF ``)展示;留空或省略则不展示。
-- 任一通道留空 `[]` 即关闭。`config.json` 已 gitignore,不会被提交;`config.example.json` 是模板。
+- `dividend_assets`:累计净值 + MA120/MA250 三档信号。
+- `shortma_assets`:单位净值 + MA20 单档信号(**国内**,只在有事件时推)。可选 `sector` 字段,卡片渲染时作为方括号板块标签(如 `` `159915` [创业板]创业板ETF ``)展示。
+- `shortma_overseas_assets`:单位净值 + MA20 单档信号(**海外**,每日必推一卡)。规则同 `shortma_assets`,但推送行为不同 —— 即使 7 只全在 MA20 之上无事件也会推一条状态卡。仅在 *全部* 取数失败时才跳过。`sector` 字段同样可选(QDII 一般不填,基金名已含"全球科技"等关键词)。
+- 任一通道留空 `[]` 即关闭(海外留空 → 跳过每日播报)。`config.json` 已 gitignore,不会被提交;`config.example.json` 是模板。
 
 > NDX/VIX 通道默认开启(无需配置基金);若不需要可在 `core/runner.py` 中跳过 `process_ndx`。VIX 阈值与 MA120 两档回撤比例定义在 `core/signals.py` 顶部常量,按需修改。
 
@@ -68,15 +73,15 @@ $EDITOR .env
 
 3 个信号独立,可同时激活。"份"是相对加仓单位,**不含具体金额**,实际投入由你自定。
 
-### shortma · MA20 单档
+### shortma / shortma_overseas · MA20 单档
 
-净值 < MA20 → 加仓提醒(不显示份数,节奏自定)。
+净值 < MA20 → 跌破 MA20 提醒(不显示份数,节奏自定)。**国内有事件才推,海外每天必推。**
 
 ### ndx · VIX 单档
 
 VIX 超过阈值(默认 30,恐慌区)→ 加仓提醒(不显示份数)。
 
-### 推送时机(适用 dividend + shortma)
+### 事件分类与卡片状态列(dividend + shortma + shortma_overseas 共用)
 
 | Emoji | 事件 | 触发条件 |
 |---|---|---|
@@ -86,18 +91,36 @@ VIX 超过阈值(默认 30,恐慌区)→ 加仓提醒(不显示份数)。
 | 🟡 | 临近 | 距下一档阈值 < 1%(陪跑提示) |
 | ⚪ | 未激活 | 距阈值 ≥ 1% |
 
-NDX 通道只在 VIX 首次突破阈值时推送(无状态跟踪)。
+行排序按事件优先级:🔴 → ⬇️ → 🟢 → 🟡 → ⚪。同档按 fund_code 字典序。NDX 通道无状态跟踪,只在 VIX 首次突破阈值时推送。
 
 ## 输出
 
 - 终端 markdown
-- `latest_alert_dividend.md` / `latest_alert_shortma.md` / `latest_alert_ndx.md`(对应通道触发时)
+- `latest_alert_dividend.md` / `latest_alert_shortma.md` / `latest_alert_shortma_overseas.md` / `latest_alert_ndx.md`(对应通道推送时)
 - `latest_alert_errors.md`(取数失败诊断,不推送)
 - `run.log`(主程序日志)
-- `state.json`(状态对比,schema v2,用于"仅首次激活才推送")
-- macOS 通知 + **Server 酱微信推送**(各通道独立一条)
+- `state.json`(状态对比,用于"首次激活才推送"机制)
+- macOS 通知 + **Server 酱微信推送**(各通道独立一条,海外每日固定一条)
 
-## 定时任务(macOS launchd)
+## 定时调度
+
+### 方案 A:GitHub Actions cron(推荐 — 跨平台、零本地依赖)
+
+工作流模板见 `.github/workflows/daily-monitor.yml`。要点:
+
+1. fork / 拷贝本仓库到你自己的 GitHub
+2. 仓库 Settings → Secrets and variables → Actions 配 2 个 secret:
+   - `SERVERCHAN_SENDKEY` — Server 酱密钥
+   - `FUND_CONFIG_B64` — 本地 `base64 -i config.json` 后粘贴(含真实基金列表,避免 commit)
+3. workflow_dispatch 触发一次 dry-run 验证跨境取数 + 凭证 OK
+4. 取消 `schedule` 注释(`cron: '0 2 * * 1-5'` 北京周一到周五 10:00)启用 cron
+5. state.json 通过 `actions/cache` 持久化(key 带 run_id 写新版、restore-keys 模糊匹配读最近一次)
+
+> 首次启用前建议先用 `bootstrap-state-cache.yml` 把本地 state.json 写进 cache(通过 `STATE_JSON_SEED_B64` secret),否则第一次 cron 会把"持续激活"误判为"首次激活"。
+>
+> GitHub-hosted runner 在境外,akshare 取国内基金净值通过腾讯/新浪 OSS 仍可访问(实测正常)。整点 cron 有 5-15 分钟延迟,接受(早盘窗口 9:30-10:30 都行)。
+
+### 方案 B:macOS launchd(本地后台,适合一直开机的 Mac 用户)
 
 复制 `fund-signal-monitor.plist.example`,把里面的 `/path/to/fund-signal-monitor` 改成你的项目绝对路径,放到 `~/Library/LaunchAgents/` 下:
 
@@ -111,25 +134,30 @@ launchctl start com.example.fund-signal-monitor  # 手动触发(会真实推送)
 
 默认每个交易日 **10:00** 跑(基金净值是 T-1 的,上午看到后还有 13:00–15:00 申购窗口)。非交易日脚本自动安静退出。
 
+**注意 launchd 的隐性脆弱性**:macOS 睡眠时 launchd 不会主动唤醒电脑,合盖期间 `StartCalendarInterval` 错过的任务靠 Dark Wake 补跑(整点常延迟 10-30 分钟,带电池或出门则可能 miss 当天)。如果不希望推送依赖电脑唤醒,优先选方案 A。
+
 ## 测试
 
 ```bash
 .venv/bin/python -m pytest tests/ -q
 ```
 
-**121 个单元测试**覆盖:MA / 三档信号 / MA20 / VIX / 首次触发 / 探底新低 / 状态逻辑 / next_threshold / 激活交易日数 / retry / 缓存 / Server 酱(含额度耗尽) / 代理 setup / VIX 双源 / IO 集成 / state v1→v2 迁移 / 配置加载 / NDX 卡片。
+**147 个单元测试**覆盖:MA / 三档信号 / MA20 / VIX / 首次触发 / 探底新低 / 状态逻辑 / next_threshold / 激活交易日数 / retry / 缓存 / Server 酱(含额度耗尽) / 代理 setup / VIX 双源 / IO 集成 / dividend·shortma·NDX 卡片渲染 / dry-run 副作用阻断 / 海外通道每日必推 / 配置加载。
 
 ## 代码结构
 
 ```
-monitor.py            launchd 入口薄壳 + 测试 re-export
+monitor.py            入口薄壳 + 测试 re-export
 core/
   config.py           读 config.json / config.example.json
   signals.py          纯函数(MA / 三档信号 / MA20 / VIX / 事件分类 / 阈值定位 / 激活天数)
-  data_io.py          IO(代理 / retry / akshare / 缓存 / state v2 迁移 / 日历缓存 / .env / logger)
+  data_io.py          IO(代理 / retry / akshare / 缓存 / state.json / 日历缓存 / .env / logger)
   notify.py           推送(macOS + Server 酱)
-  cards.py            Markdown 卡片(三通道合并卡 + state-cell renderer)
+  cards.py            Markdown 卡片(三通道合并卡 + state-cell renderer,shortma 国内/海外复用同一 builder)
   runner.py           主流程(process_asset / process_shortma_asset / process_ndx / main)
+.github/workflows/
+  daily-monitor.yml         GitHub Actions cron 主工作流
+  bootstrap-state-cache.yml 一次性 cache seed 工具(避免首次 cron 误判)
 ```
 
 ## 红线
@@ -137,19 +165,21 @@ core/
 - 只做提醒,**绝不下单、买卖、转账**。脚本只生成文本。
 - 数据取不到一律标"未取到",不编造。
 - 技术指标不保证未来有效,**不构成投资建议**。
-- 不显示具体加仓金额。
+- 不显示具体加仓金额(dividend 只显示"X 份",shortma / shortma_overseas / ndx 完全不显示份数)。
 
 ## 数据口径说明
 
 - **累计净值**(dividend 通道):分红还原,走势平滑,避免分红除权对 MA 的扰动 —— 适合做中长期回撤判断。
-- **单位净值**(shortma 通道):贴近短线交易习惯,配合 MA20 看短期超跌。
+- **单位净值**(shortma / shortma_overseas 通道):贴近短线交易习惯,配合 MA20 看短期超跌。
 - **NDX/VIX**:指数点位走行情源,VIX 走 Yahoo Finance(主)+ CBOE delayed_quotes(备)双源容错。
 
 ## 已知限制
 
 - 公募基金净值 T+1 公布(当晚),10:00 跑时拿到的是 T-1 数据。
-- VIX 数据源在境外,部分地区需本地代理(在 plist 的 `EnvironmentVariables` 里配,不需要可删除该块)。
-- Server 酱免费版每天 5 条额度,日均 0–2 条属正常使用。
+- **海外 QDII 净值披露通常比国内基金晚一个交易日**(根据海外市场收盘后才算 NAV),所以海外通道卡片的 `数据截至` 字段会比国内通道旧一天 —— 正常,不是 bug。
+- VIX 数据源在境外,本地 launchd 跑时部分地区需本地代理(在 plist 的 `EnvironmentVariables` 里配,不需要可删除该块);GitHub Actions runner 在境外可直连,无需配代理。
+- Server 酱免费版每天 5 条额度,日均 2-4 条属正常使用(海外通道固定占 1 条)。
+- macOS launchd 依赖电脑唤醒,详见上方"定时调度"章节的脆弱性提醒。
 
 ## License
 
