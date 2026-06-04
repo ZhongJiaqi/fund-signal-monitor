@@ -23,10 +23,10 @@ on:
         options:
           - dry-run
           - production
-  # 工作日北京 10:00 (02:00 UTC) 自动跑生产
-  # GitHub cron 整点常有 5-15 分钟延迟,接受
-  schedule:
-    - cron: '0 2 * * 1-5'
+  # 触发源:Cloudflare Workers cron(workers.dev 上的 fund-monitor-cron)
+  # 工作日北京 10:00 通过 GitHub Dispatch API POST 触发 workflow_dispatch
+  # 不用 GitHub schedule —— 整点高负载会延迟/跳过,做不到 10:00 准时
+  # Worker 源码: ~/cf-cron-trigger
 
 jobs:
   monitor:
