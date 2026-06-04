@@ -1,0 +1,14 @@
+name = "fund-monitor-cron"
+main = "src/index.js"
+compatibility_date = "2026-06-04"
+
+# 工作日北京 10:00 = UTC 02:00
+# Cloudflare Workers cron 实测精度 ±10 秒
+[triggers]
+crons = ["0 2 * * 1-5"]
+
+# 免费版 Workers 默认 CPU 上限 10ms,本 worker 只一个 fetch + 一次 JSON.stringify,远低于
+# 不配 [limits] —— 免费版禁用此字段
+
+[observability]
+enabled = true

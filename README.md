@@ -104,23 +104,39 @@ VIX 超过阈值(默认 30,恐慌区)→ 加仓提醒(不显示份数)。
 
 ## 定时调度
 
-### 方案 A:GitHub Actions cron(推荐 — 跨平台、零本地依赖)
+### 方案 A:Cloudflare Workers cron 触发 GitHub Actions(推荐 — 准时、零本地依赖)
 
-工作流模板见 `.github/workflows/daily-monitor.yml`。要点:
+> **为什么不直接用 GitHub Actions schedule:** schedule cron 整点高负载会延迟数分钟到数小时,极端情况下整次跳过(本仓库 2026-06-04 实测漏跑)。Cloudflare Workers cron 精度 ±10 秒,调 GitHub Dispatch API 启动 workflow,微信约 10:00~10:02 收到。
 
-1. fork / 拷贝本仓库到你自己的 GitHub
-2. 仓库 Settings → Secrets and variables → Actions 配 2 个 secret:
+架构:
+```
+Cloudflare Workers cron `0 2 * * 1-5` (±10s)
+    → POST GitHub Dispatch API
+    → daily-monitor.yml `workflow_dispatch`
+    → monitor.py + Server 酱推送
+```
+
+子目录 `cf-cron-trigger/` 即 Cloudflare Worker 源码(详见该目录 README)。要点:
+
+1. fork / 拷贝本仓库
+2. fund-signal-monitor 仓库 Settings → Secrets and variables → Actions 配 2 个 secret:
    - `SERVERCHAN_SENDKEY` — Server 酱密钥
-   - `FUND_CONFIG_B64` — 本地 `base64 -i config.json` 后粘贴(含真实基金列表,避免 commit)
-3. workflow_dispatch 触发一次 dry-run 验证跨境取数 + 凭证 OK
-4. 取消 `schedule` 注释(`cron: '0 2 * * 1-5'` 北京周一到周五 10:00)启用 cron
-5. state.json 通过 `actions/cache` 持久化(key 带 run_id 写新版、restore-keys 模糊匹配读最近一次)
+   - `FUND_CONFIG_B64` — 本地 `base64 -i config.json` 后粘贴(避免 commit)
+3. workflow_dispatch 手动跑一次 dry-run 验证跨境取数 + 凭证 OK
+4. 创建 GitHub Fine-grained PAT(仅本仓库 Actions:write)
+5. `cd cf-cron-trigger && npx wrangler login && npx wrangler secret put GH_TOKEN`(粘贴 PAT)+ `wrangler secret put TRIGGER_TOKEN`(随机) + 可选 `wrangler secret put SERVERCHAN_KEY`(失败告警)
+6. `npx wrangler deploy` 启用 worker cron
+7. state.json 仍通过 `actions/cache` 持久化(key 带 run_id 写新版、restore-keys 模糊匹配读最近一次)
 
-> 首次启用前建议先用 `bootstrap-state-cache.yml` 把本地 state.json 写进 cache(通过 `STATE_JSON_SEED_B64` secret),否则第一次 cron 会把"持续激活"误判为"首次激活"。
+> 首次启用前建议先用 `bootstrap-state-cache.yml` 把本地 state.json 写进 cache(通过 `STATE_JSON_SEED_B64` secret),否则第一次跑会把"持续激活"误判为"首次激活"。
 >
-> GitHub-hosted runner 在境外,akshare 取国内基金净值通过腾讯/新浪 OSS 仍可访问(实测正常)。整点 cron 有 5-15 分钟延迟,接受(早盘窗口 9:30-10:30 都行)。
+> GitHub-hosted runner 在境外,akshare 取国内基金净值通过腾讯/新浪 OSS 仍可访问(实测正常)。
 
-### 方案 B:macOS launchd(本地后台,适合一直开机的 Mac 用户)
+### 方案 B:GitHub Actions schedule(不推荐,作历史保留)
+
+直接用 `daily-monitor.yml` 启用 `schedule: [{cron: '0 2 * * 1-5'}]`。**不推荐**:整点高负载常延迟/跳过,做不到准时,本仓库已踩坑。仅作为 Cloudflare 故障时临时回滚选项。
+
+### 方案 C:macOS launchd(本地后台,适合一直开机的 Mac 用户)
 
 复制 `fund-signal-monitor.plist.example`,把里面的 `/path/to/fund-signal-monitor` 改成你的项目绝对路径,放到 `~/Library/LaunchAgents/` 下:
 
@@ -156,8 +172,11 @@ core/
   cards.py            Markdown 卡片(三通道合并卡 + state-cell renderer,shortma 国内/海外复用同一 builder)
   runner.py           主流程(process_asset / process_shortma_asset / process_ndx / main)
 .github/workflows/
-  daily-monitor.yml         GitHub Actions cron 主工作流
-  bootstrap-state-cache.yml 一次性 cache seed 工具(避免首次 cron 误判)
+  daily-monitor.yml         monitor.py 主工作流(由 Cloudflare Worker workflow_dispatch 触发)
+  bootstrap-state-cache.yml 一次性 cache seed 工具(避免首次跑误判)
+cf-cron-trigger/            Cloudflare Workers 调度器(±10s 精度调 GitHub Dispatch API)
+  src/index.js              纯 fetch worker:cron / scheduled + HTTP /trigger 端点
+  wrangler.toml             worker 名 + cron 配置
 ```
 
 ## 红线
