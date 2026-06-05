@@ -104,13 +104,19 @@ def _parse_args(argv: list[str] | None = None):
         help='预览模式:不真发微信/不弹通知/不写 state.json/不写 latest_alert_*.md,'
              '只在 stdout 显示会推送的内容。改推送内容前先跑这个。',
     )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='跳过 same-day 幂等检查 — 即使 state.last_run 是今天也强制重跑(再次推送)。'
+             '正常使用不需要;multi-schedule 兜底依赖默认幂等,手动重跑时偶尔用。',
+    )
     return parser.parse_args(argv)
 
 
 if __name__ == '__main__':
     args = _parse_args()
     try:
-        sys.exit(main(dry_run=args.dry_run))
+        sys.exit(main(dry_run=args.dry_run, force=args.force))
     except TimeoutError as e:
         get_logger().error(str(e))
         sys.exit(2)

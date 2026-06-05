@@ -220,13 +220,18 @@ def process_ndx(prev_state: dict, log: logging.Logger) -> dict:
     return out
 
 
-def main(today: Optional[date] = None, dry_run: bool = False) -> int:
+def main(today: Optional[date] = None, dry_run: bool = False, force: bool = False) -> int:
     """主流程入口。
 
     dry_run=True 时阻断 5 类副作用:Server 酱推送 / macOS 通知 / save_state /
     latest_alert_*.md 文件写入 / latest_alert_errors.md。其余照常(取数、
     history CSV 缓存、trading_calendar 缓存、run.log)。stdout 显式 [DRY-RUN]
     前缀,每通道标注"会推 / 不会推"。
+
+    force=True 时跳过 same-day 幂等检查(手动重跑 escape hatch)。生产路径
+    默认 force=False:state.last_run.date() == today 视为今日已推过,fast exit
+    不重复打扰用户。配合 Cloudflare Workers 多 schedule 触发(0/5/10 2 * * 1-5
+    UTC),任一时间点成功即可,后续触发被幂等吸收。
     """
     # 第一步:准备代理环境(给 Yahoo 用 _ORIG_PROXIES,清空 env 给 akshare 直连)
     setup_proxy_env()
@@ -252,6 +257,26 @@ def main(today: Optional[date] = None, dry_run: bool = False) -> int:
         log.warning(f'交易日历获取失败,继续运行: {e}')
 
     state = load_state()
+
+    # 幂等检查:multi-schedule 触发时防重复推送
+    # 仅 production 路径生效(dry-run 不写 state 不污染,自然幂等;force 显式绕过)
+    if not dry_run and not force:
+        last_run_iso = state.get('last_run', '')
+        last_run_date = None
+        if last_run_iso:
+            try:
+                last_run_date = datetime.fromisoformat(last_run_iso).date()
+            except (TypeError, ValueError):
+                last_run_date = None  # 数据腐败 → 视为无 last_run,放行
+        if last_run_date == today:
+            msg = (
+                f'今日 ({today}) 已成功跑过 (last_run={last_run_iso}),'
+                f'跳过推送 — multi-schedule 兜底触发吸收(--force 可强制重跑)。'
+            )
+            log.info(msg)
+            print(msg)
+            return 0
+
     new_assets_state = {}
     all_dividend_results: list[tuple] = []      # [(Asset, result), ...] 全部 3 只
     dividend_text_lines: list[str] = []         # 终端简短文本

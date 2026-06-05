@@ -2,10 +2,12 @@ name = "fund-monitor-cron"
 main = "src/index.js"
 compatibility_date = "2026-06-04"
 
-# 工作日北京 10:00 = UTC 02:00
-# Cloudflare Workers cron 实测精度 ±10 秒
+# 工作日北京 10:00/10:05/10:10 = UTC 02:00/02:05/02:10 三次触发
+# 单次 CF cron 偶发漏跑(2026-06-05 实测),多 schedule 兜底任一成功即可
+# monitor.py 内置 same-day 幂等(state.last_run.date() == today → skip push),
+# 避免多 schedule 同时成功时重复推送
 [triggers]
-crons = ["0 2 * * 1-5"]
+crons = ["0 2 * * 1-5", "5 2 * * 1-5", "10 2 * * 1-5"]
 
 # 免费版 Workers 默认 CPU 上限 10ms,本 worker 只一个 fetch + 一次 JSON.stringify,远低于
 # 不配 [limits] —— 免费版禁用此字段
