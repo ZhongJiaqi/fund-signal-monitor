@@ -65,9 +65,54 @@ export default {
     console.log('cron dispatch ok', JSON.stringify(result));
   },
 
-  // HTTP: /trigger 手动测试, / 返回状态
+  // HTTP: /trigger 手动测试 / /push 推送中转 / /probe-sctapi(-post) 诊断 / / 状态
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    if (url.pathname === '/push') {
+      // Server 酱推送中转(2026-06-05 起):GitHub-hosted runner US 出口被 sctapi 端
+      // 强制 RST,改由 GitHub Actions → 本 Worker → sctapi。CF Worker SJC colo 实测
+      // 同样 US 区域但出口路径通(probe-sctapi-post HTTP 400 + JSON 业务响应)。
+      // Authorization: Bearer TRIGGER_TOKEN(与 /trigger 共享)。
+      // Body: JSON {title, desp}。
+      // 响应:透传 sctapi 的 status + body(monitor.py 解析 code 不变)。
+      if (request.method !== 'POST') {
+        return new Response('Method Not Allowed', { status: 405 });
+      }
+      const auth = request.headers.get('Authorization') || '';
+      if (auth !== `Bearer ${env.TRIGGER_TOKEN}`) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      if (!env.SERVERCHAN_KEY) {
+        return new Response('SERVERCHAN_KEY not configured on worker', { status: 500 });
+      }
+      let payload;
+      try {
+        payload = await request.json();
+      } catch (e) {
+        return new Response('Invalid JSON body', { status: 400 });
+      }
+      const title = (payload?.title || '').toString();
+      const desp = (payload?.desp || '').toString();
+      if (!title || !desp) {
+        return new Response('Missing title or desp', { status: 400 });
+      }
+      const sctapiRes = await fetch(
+        `https://sctapi.ftqq.com/${env.SERVERCHAN_KEY}.send`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ title, desp }).toString(),
+        }
+      );
+      const sctapiBody = await sctapiRes.text();
+      return new Response(sctapiBody, {
+        status: sctapiRes.status,
+        headers: {
+          'Content-Type': sctapiRes.headers.get('Content-Type') || 'application/json',
+        },
+      });
+    }
 
     if (url.pathname === '/trigger') {
       const auth = request.headers.get('Authorization') || '';
@@ -78,6 +123,77 @@ export default {
       const mode = url.searchParams.get('mode') === 'dry-run' ? 'dry-run' : 'production';
       const result = await dispatchWorkflow(env, mode);
       return Response.json(result, { status: result.ok ? 200 : 502 });
+    }
+
+    if (url.pathname === '/probe-sctapi-post') {
+      // 带 sendkey POST 路径探活:用故意无效的 sendkey 调真实 .send 端点。
+      // Server 酱业务返回 code != 0(invalid sendkey)= HTTP+TLS+POST 链路全通,
+      // 仅 sendkey 鉴权失败 → 证明 /push 中转方案的 POST 路径可行。
+      // 不耗任何真实额度(无效 sendkey 不计费)。
+      const auth = request.headers.get('Authorization') || '';
+      if (auth !== `Bearer ${env.TRIGGER_TOKEN}`) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      const startedAt = Date.now();
+      try {
+        const res = await fetch('https://sctapi.ftqq.com/SCT_INVALID_PROBE_KEY.send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ title: 'probe', desp: 'probe' }).toString(),
+        });
+        const body = await res.text();
+        return Response.json({
+          ok: true,
+          httpStatus: res.status,
+          body: body.slice(0, 500),
+          elapsedMs: Date.now() - startedAt,
+          colo: request.cf?.colo || 'unknown',
+          note: 'HTTP 任何 2xx/4xx + Server 酱 JSON 业务响应 = POST 路径通;ConnectionReset/timeout = 不通',
+        });
+      } catch (e) {
+        return Response.json({
+          ok: false,
+          error: e.message,
+          elapsedMs: Date.now() - startedAt,
+          colo: request.cf?.colo || 'unknown',
+        }, { status: 502 });
+      }
+    }
+
+    if (url.pathname === '/probe-sctapi') {
+      // 诊断:从 Cloudflare Worker 出口能否稳定连通 sctapi.ftqq.com?
+      // GitHub-hosted runner(US 出口)2026-06-05 实测被 sctapi 强制 RST 连接,
+      // 若 CF 此处通,则 worker /push 路由是可行的 Server 酱推送中转方案。
+      // 仅做 GET / 探活,**不发推送**,不耗 sendkey 额度。
+      const auth = request.headers.get('Authorization') || '';
+      const expected = `Bearer ${env.TRIGGER_TOKEN}`;
+      if (auth !== expected) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      const startedAt = Date.now();
+      try {
+        const res = await fetch('https://sctapi.ftqq.com/', {
+          method: 'GET',
+          cf: { cacheTtl: 0 },
+        });
+        return Response.json({
+          ok: true,
+          httpStatus: res.status,
+          elapsedMs: Date.now() - startedAt,
+          colo: request.cf?.colo || 'unknown',
+          probedAt: new Date().toISOString(),
+          note: 'GET / 探活;HTTP 404/200 都算通,意味着 TCP+TLS 建立 + Server 酱接受请求,只是无 sendkey 路径',
+        });
+      } catch (e) {
+        return Response.json({
+          ok: false,
+          error: e.message,
+          elapsedMs: Date.now() - startedAt,
+          colo: request.cf?.colo || 'unknown',
+          probedAt: new Date().toISOString(),
+          note: 'CF 出口到 sctapi 不通 → /push 中转方案不可行,需走 Telegram/VPS/launchd 方案',
+        }, { status: 502 });
+      }
     }
 
     return new Response(

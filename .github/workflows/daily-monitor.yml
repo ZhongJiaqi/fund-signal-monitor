@@ -99,6 +99,13 @@ jobs:
           echo "Runner location hint: $(curl -s --max-time 3 https://ipinfo.io/country || echo unknown)"
 
       - name: Run monitor
+        env:
+          # Server 酱 sctapi.ftqq.com 对 GitHub runner US 出口 RST 连接(2026-06-05 实测),
+          # 改走 Cloudflare Worker /push 中转(SJC colo 实测通)。
+          # SERVERCHAN_PROXY_TOKEN = Worker 的 TRIGGER_TOKEN(同一个 64hex)。
+          # core.notify.send_serverchan 检测到此两 env 自动走代理;缺一个 → 降级直连。
+          SERVERCHAN_PROXY_URL: https://fund-monitor-cron.zhongjiaqi.workers.dev/push
+          SERVERCHAN_PROXY_TOKEN: ${{ secrets.SERVERCHAN_PROXY_TOKEN }}
         run: |
           if [ "${{ steps.mode.outputs.mode }}" = "dry-run" ]; then
             python monitor.py --dry-run
