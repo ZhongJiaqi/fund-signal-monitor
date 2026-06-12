@@ -23,10 +23,20 @@ on:
         options:
           - dry-run
           - production
-  # 触发源:Cloudflare Workers cron(workers.dev 上的 fund-monitor-cron)
+  # 主触发源:Cloudflare Workers cron(workers.dev 上的 fund-monitor-cron)
   # 工作日北京 10:00 通过 GitHub Dispatch API POST 触发 workflow_dispatch
-  # 不用 GitHub schedule —— 整点高负载会延迟/跳过,做不到 10:00 准时
-  # Worker 源码: cf-cron-trigger/
+  # 精度 ±10 秒。Worker 源码: cf-cron-trigger/
+  #
+  # 兜底触发源(2026-06-12 加):GitHub Actions 原生 schedule,异源双跳板
+  # 背景:2026-06-12 CF Workers 平台 02:00-02:11 UTC 整段窗口 scheduled 漏跑,
+  # 3 个 CF schedule 全部 miss,用户当天没收到推送。多点兜底无法救平台级故障。
+  # 解法:多加一条 GitHub 原生 schedule,跟 CF 完全异源,任一活就有推送。
+  # 时间错开 CF 主路径 → 11:15 北京(GH schedule 高负载常延迟 5-20 分钟,11:15 想要
+  # 实际命中约 11:20-11:35,远晚于 CF 主路径 10:00)。
+  # 防双发:monitor.py same-day 幂等(state.last_run.date()==today → fast-exit),
+  # CF 跑成功则 GH schedule 触发时被吸收,见 core/runner.py 幂等检查。
+  schedule:
+    - cron: '15 3 * * 1-5'   # 北京 11:15 兜底
 
 jobs:
   monitor:

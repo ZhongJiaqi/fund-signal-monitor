@@ -152,6 +152,16 @@ launchctl start com.example.fund-signal-monitor  # 手动触发(会真实推送)
 
 **注意 launchd 的隐性脆弱性**:macOS 睡眠时 launchd 不会主动唤醒电脑,合盖期间 `StartCalendarInterval` 错过的任务靠 Dark Wake 补跑(整点常延迟 10-30 分钟,带电池或出门则可能 miss 当天)。如果不希望推送依赖电脑唤醒,优先选方案 A。
 
+> **⚠️ 切勿与方案 A 并行运行 launchd**(本仓库 2026-06-09 实测踩坑)。如果云端 cron(方案 A)和本地 launchd(方案 C)同时启用,两条独立链路**共用同一 Server 酱 sendkey 但 state.json 各自一份互不知情**,both will fire → 用户每天收到 ×2 重复推送。若想"保留 launchd 作回退",**不能只 `launchctl unload`**——电脑重启 / 重新登录时 launchd 会自动 auto-load 回 `~/Library/LaunchAgents/*.plist` 后缀文件。要真停掉,plist 必须重命名为 `*.plist.disabled` 后缀(launchd 不会扫这个后缀):
+>
+> ```bash
+> launchctl unload ~/Library/LaunchAgents/<your-label>.plist
+> mv ~/Library/LaunchAgents/<your-label>.plist \
+>    ~/Library/LaunchAgents/<your-label>.plist.disabled
+> ```
+>
+> 想恢复:rename 回 `.plist` + `launchctl load`。**同时记得停掉云端**(`gh workflow disable daily-monitor.yml`),否则又会双发。
+
 ## 测试
 
 ```bash
