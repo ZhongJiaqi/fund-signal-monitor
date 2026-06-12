@@ -23,6 +23,11 @@ on:
         options:
           - dry-run
           - production
+      force:
+        description: '跳过 same-day 幂等(强制重跑;用于故障验证)'
+        required: false
+        default: false
+        type: boolean
   # 主触发源:Cloudflare Workers cron(workers.dev 上的 fund-monitor-cron)
   # 工作日北京 10:00 通过 GitHub Dispatch API POST 触发 workflow_dispatch
   # 精度 ±10 秒。Worker 源码: cf-cron-trigger/
@@ -117,10 +122,14 @@ jobs:
           SERVERCHAN_PROXY_URL: https://fund-monitor-cron.zhongjiaqi.workers.dev/push
           SERVERCHAN_PROXY_TOKEN: ${{ secrets.SERVERCHAN_PROXY_TOKEN }}
         run: |
+          FORCE_FLAG=""
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
           if [ "${{ steps.mode.outputs.mode }}" = "dry-run" ]; then
-            python monitor.py --dry-run
+            python monitor.py --dry-run $FORCE_FLAG
           else
-            python monitor.py
+            python monitor.py $FORCE_FLAG
           fi
 
       - name: Save state.json to cache (production only)
