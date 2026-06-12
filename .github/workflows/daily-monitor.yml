@@ -74,17 +74,23 @@ jobs:
       - name: Write secrets to files
         env:
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           FUND_CONFIG_B64: ${{ secrets.FUND_CONFIG_B64 }}
         run: |
-          if [ -z "$SERVERCHAN_SENDKEY" ]; then
-            echo "::error::Secret SERVERCHAN_SENDKEY 未配置"
+          if [ -z "$FEISHU_WEBHOOK_URL" ]; then
+            echo "::error::Secret FEISHU_WEBHOOK_URL 未配置 (2026-06-12 起从 ServerChan 切到飞书)"
             exit 1
           fi
           if [ -z "$FUND_CONFIG_B64" ]; then
             echo "::error::Secret FUND_CONFIG_B64 未配置"
             exit 1
           fi
-          printf 'SERVERCHAN_SENDKEY=%s\n' "$SERVERCHAN_SENDKEY" > .env
+          # SERVERCHAN_SENDKEY 阶段 1 暂留(send_serverchan 函数仍在,但 runner.py 不再调用),
+          # 阶段 2 飞书稳定 2-3 天后整体清理
+          printf 'FEISHU_WEBHOOK_URL=%s\n' "$FEISHU_WEBHOOK_URL" > .env
+          if [ -n "$SERVERCHAN_SENDKEY" ]; then
+            printf 'SERVERCHAN_SENDKEY=%s\n' "$SERVERCHAN_SENDKEY" >> .env
+          fi
           printf '%s' "$FUND_CONFIG_B64" | base64 -d > config.json
           if [ ! -s config.json ]; then
             echo "::error::config.json 解码为空,检查 FUND_CONFIG_B64 是否粘错"
@@ -114,13 +120,9 @@ jobs:
           echo "Runner location hint: $(curl -s --max-time 3 https://ipinfo.io/country || echo unknown)"
 
       - name: Run monitor
-        env:
-          # Server 酱 sctapi.ftqq.com 对 GitHub runner US 出口 RST 连接(2026-06-05 实测),
-          # 改走 Cloudflare Worker /push 中转(SJC colo 实测通)。
-          # SERVERCHAN_PROXY_TOKEN = Worker 的 TRIGGER_TOKEN(同一个 64hex)。
-          # core.notify.send_serverchan 检测到此两 env 自动走代理;缺一个 → 降级直连。
-          SERVERCHAN_PROXY_URL: https://fund-monitor-cron.zhongjiaqi.workers.dev/push
-          SERVERCHAN_PROXY_TOKEN: ${{ secrets.SERVERCHAN_PROXY_TOKEN }}
+        # 2026-06-12 起 ServerChan 整链路下线: 原 SERVERCHAN_PROXY_URL/TOKEN 已删
+        # (sctapi 对 CF Workers 出口 silent-fail,worker /push 中转方案失效)。
+        # 现走 .env 里 FEISHU_WEBHOOK_URL,monitor.py → 飞书自定义机器人 webhook → 飞书群。
         run: |
           FORCE_FLAG=""
           if [ "${{ github.event.inputs.force }}" = "true" ]; then

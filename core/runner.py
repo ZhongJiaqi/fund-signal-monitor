@@ -47,7 +47,7 @@ from core.data_io import (
     save_unit_history,
     setup_proxy_env,
 )
-from core.notify import send_macos_notification, send_serverchan
+from core.notify import send_feishu_bot, send_macos_notification, send_serverchan  # noqa: F401
 from core.signals import (
     SIGNAL_LABELS,
     evaluate_ma20_signal,
@@ -372,7 +372,9 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
         save_state(state)
 
     env = load_env()
-    sendkey = env.get('SERVERCHAN_SENDKEY', '')
+    # 2026-06-12 起从 ServerChan 切到飞书自定义机器人(根因:sctapi 对 CF Workers
+    # 出口 silent-fail)。sendkey 暂留(send_serverchan 函数也留),阶段 2 整体清理。
+    feishu_url = env.get('FEISHU_WEBHOOK_URL', '')
 
     # ----- 通道 1:红利低波(统一推送,合并卡)-----
     has_first = any(r['fired_first'] for _, r in all_dividend_results)
@@ -396,7 +398,7 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
                 title=title,
                 message=';'.join(fired_short) or '当前仍处于加仓窗口',
             )
-            send_serverchan(sendkey, title, md, log)
+            send_feishu_bot(feishu_url, title, md, log)
     elif dry_run:
         print('\n[DRY-RUN] 红利低波 不会推(无信号事件)')
 
@@ -423,7 +425,7 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
                 title=title,
                 message=';'.join(shortma_fired_short) or '当前仍处于跌破 MA20 窗口',
             )
-            send_serverchan(sendkey, title, md, log)
+            send_feishu_bot(feishu_url, title, md, log)
     elif dry_run:
         print('\n[DRY-RUN] 科技-国内 不会推(无信号事件)')
 
@@ -453,7 +455,7 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
             print(md)
             (ROOT / 'latest_alert_shortma_overseas.md').write_text(md, encoding='utf-8')
             send_macos_notification(title=title, message=macos_msg)
-            send_serverchan(sendkey, title, md, log)
+            send_feishu_bot(feishu_url, title, md, log)
     elif dry_run:
         print('\n[DRY-RUN] 科技-海外 不会推(7 只全部取数失败)')
 
@@ -472,7 +474,7 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
                 title=title,
                 message=f'VIX {fmt_num(ndx_result["vix"], 2)} 突破 {VIX_THRESHOLD:.0f}',
             )
-            send_serverchan(sendkey, title, md, log)
+            send_feishu_bot(feishu_url, title, md, log)
     elif dry_run:
         vix_v = ndx_result.get('vix')
         if vix_v is None:

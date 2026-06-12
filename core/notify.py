@@ -26,6 +26,43 @@ def send_macos_notification(title: str, message: str) -> None:
         pass
 
 
+def send_feishu_bot(webhook_url: str, title: str, desp: str, log: logging.Logger) -> None:
+    """飞书自定义机器人推送(interactive 卡片包装现有 markdown)。
+
+    无 webhook URL/失败时静默(打 warning)。飞书业务响应 code=0 表示成功;
+    非 0 时 log warning(同 send_serverchan 一致语义)。
+
+    取代 ServerChan worker /push 中转 — 后者 2026-06-12 起被 sctapi 对 CF
+    Workers 出口静默拒绝(silent-fail with code=0,不投递不计额度)。飞书是字节
+    自家 API,无反 CF/反 GH runner 出口策略,100 条/分钟 + 5 条/秒,远超需求。
+
+    见 [[project-fund-signal-monitor-serverchan-to-feishu-migration]] (2026-06-12)。
+    """
+    if not webhook_url or not webhook_url.startswith('https://open.feishu.cn'):
+        return
+    payload = {
+        'msg_type': 'interactive',
+        'card': {
+            'schema': '2.0',
+            'header': {
+                'title': {'tag': 'plain_text', 'content': title[:200]},
+                'template': 'blue',
+            },
+            'body': {
+                'elements': [{'tag': 'markdown', 'content': desp}],
+            },
+        },
+    }
+    try:
+        r = requests.post(webhook_url, json=payload, timeout=15)
+        body = r.json() if r.headers.get('content-type', '').startswith('application/json') else {}
+        code = body.get('code', 0)
+        if code not in (0, None):
+            log.warning(f'飞书机器人推送返回非 0: {r.text[:200]}')
+    except Exception as e:
+        log.warning(f'飞书机器人推送失败: {e}')
+
+
 def send_serverchan(sendkey: str, title: str, desp: str, log: logging.Logger) -> None:
     """Server 酱推送到微信。无 key/失败 时静默(并打 warning 日志)。
 

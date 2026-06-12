@@ -65,6 +65,7 @@ from core.data_io import (  # noqa: F401
 )
 from core.notify import (  # noqa: F401
     SERVERCHAN_QUOTA_CODES,
+    send_feishu_bot,
     send_macos_notification,
     send_serverchan,
 )
