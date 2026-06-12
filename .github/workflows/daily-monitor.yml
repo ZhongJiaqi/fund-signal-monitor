@@ -75,10 +75,17 @@ jobs:
         env:
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_DOC_ID: ${{ secrets.LARK_DOC_ID }}
           FUND_CONFIG_B64: ${{ secrets.FUND_CONFIG_B64 }}
         run: |
           if [ -z "$FEISHU_WEBHOOK_URL" ]; then
             echo "::error::Secret FEISHU_WEBHOOK_URL 未配置 (2026-06-12 起从 ServerChan 切到飞书)"
+            exit 1
+          fi
+          if [ -z "$LARK_APP_ID" ] || [ -z "$LARK_APP_SECRET" ] || [ -z "$LARK_DOC_ID" ]; then
+            echo "::error::飞书云文档凭证未配置(LARK_APP_ID / LARK_APP_SECRET / LARK_DOC_ID)"
             exit 1
           fi
           if [ -z "$FUND_CONFIG_B64" ]; then
@@ -86,8 +93,9 @@ jobs:
             exit 1
           fi
           # SERVERCHAN_SENDKEY 阶段 1 暂留(send_serverchan 函数仍在,但 runner.py 不再调用),
-          # 阶段 2 飞书稳定 2-3 天后整体清理
+          # 阶段 2 飞书云文档稳定 2-3 天后整体清理
           printf 'FEISHU_WEBHOOK_URL=%s\n' "$FEISHU_WEBHOOK_URL" > .env
+          printf 'LARK_DOC_ID=%s\n' "$LARK_DOC_ID" >> .env
           if [ -n "$SERVERCHAN_SENDKEY" ]; then
             printf 'SERVERCHAN_SENDKEY=%s\n' "$SERVERCHAN_SENDKEY" >> .env
           fi
@@ -134,6 +142,41 @@ jobs:
             python monitor.py $FORCE_FLAG
           fi
 
+      - name: Setup Node.js + install lark-cli (production only)
+        # 2026-06-12 起:用飞书云文档承载完整表格(规避飞书消息流移动端长卡片
+        # 强制折叠的限制),lark-cli docs +update 把 monitor.py 生成的 XML 写到
+        # 固定文档 ID。dry-run 模式不写云文档(只本地输出 XML 预览)。
+        if: steps.mode.outputs.mode == 'production' && success()
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Update Lark doc (production only)
+        if: steps.mode.outputs.mode == 'production' && success()
+        env:
+          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_DOC_ID: ${{ secrets.LARK_DOC_ID }}
+        run: |
+          if [ ! -s latest_alert_combined.xml ]; then
+            echo "::warning::latest_alert_combined.xml 缺失或为空,跳过云文档更新"
+            exit 0
+          fi
+          npm install -g @larksuite/cli 2>&1 | tail -3
+          # 非交互鉴权(bot 身份):config init --app-id + --app-secret-stdin
+          printf '%s' "$LARK_APP_SECRET" | lark-cli config init \
+            --app-id "$LARK_APP_ID" \
+            --app-secret-stdin \
+            --brand feishu \
+            --new
+          # overwrite 模式:整篇文档替换(每天覆盖前一天数据)
+          lark-cli docs +update \
+            --doc "$LARK_DOC_ID" \
+            --command overwrite \
+            --content "@./latest_alert_combined.xml" \
+            --doc-format xml \
+            --as bot
+
       - name: Save state.json to cache (production only)
         if: steps.mode.outputs.mode == 'production' && success()
         uses: actions/cache/save@v4
@@ -149,6 +192,7 @@ jobs:
           path: |
             run.log
             latest_alert_*.md
+            latest_alert_combined.xml
             latest_alert_errors.md
             state.json
           retention-days: 7

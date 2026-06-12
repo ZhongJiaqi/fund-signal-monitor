@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Optional
 
 from core.cards import (
+    build_combined_xml,
     build_dividend_card_md,
+    build_feishu_summary_lines,
     build_ndx_card_md,
     build_ndx_summary_line,
     build_shortma_card_md,
@@ -47,7 +49,12 @@ from core.data_io import (
     save_unit_history,
     setup_proxy_env,
 )
-from core.notify import send_feishu_bot, send_macos_notification, send_serverchan  # noqa: F401
+from core.notify import (  # noqa: F401
+    send_feishu_bot,
+    send_feishu_summary_card,
+    send_macos_notification,
+    send_serverchan,
+)
 from core.signals import (
     SIGNAL_LABELS,
     evaluate_ma20_signal,
@@ -398,7 +405,6 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
                 title=title,
                 message=';'.join(fired_short) or '当前仍处于加仓窗口',
             )
-            send_feishu_bot(feishu_url, title, md, log)
     elif dry_run:
         print('\n[DRY-RUN] 红利低波 不会推(无信号事件)')
 
@@ -425,7 +431,6 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
                 title=title,
                 message=';'.join(shortma_fired_short) or '当前仍处于跌破 MA20 窗口',
             )
-            send_feishu_bot(feishu_url, title, md, log)
     elif dry_run:
         print('\n[DRY-RUN] 科技-国内 不会推(无信号事件)')
 
@@ -455,7 +460,6 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
             print(md)
             (ROOT / 'latest_alert_shortma_overseas.md').write_text(md, encoding='utf-8')
             send_macos_notification(title=title, message=macos_msg)
-            send_feishu_bot(feishu_url, title, md, log)
     elif dry_run:
         print('\n[DRY-RUN] 科技-海外 不会推(7 只全部取数失败)')
 
@@ -474,7 +478,6 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
                 title=title,
                 message=f'VIX {fmt_num(ndx_result["vix"], 2)} 突破 {VIX_THRESHOLD:.0f}',
             )
-            send_feishu_bot(feishu_url, title, md, log)
     elif dry_run:
         vix_v = ndx_result.get('vix')
         if vix_v is None:
@@ -533,6 +536,32 @@ def main(today: Optional[date] = None, dry_run: bool = False, force: bool = Fals
         else:
             (ROOT / 'latest_alert_errors.md').write_text(err_md, encoding='utf-8')
             log.warning(f'取数失败 {len(fetch_errors)} 项,已写 latest_alert_errors.md(未推送)')
+
+    # ----- 飞书云文档 + 摘要卡片(2026-06-12 起替代 4 张长 markdown 卡片) -----
+    # 写 latest_alert_combined.xml 供 GH Actions 用 lark-cli docs +update 上传到云文档。
+    # 飞书 webhook 发摘要卡片(短 markdown + 按钮跳云文档),规避飞书移动端长卡片
+    # 强制折叠的产品限制。详见 [[project-fund-signal-monitor-feishu-doc-migration]]。
+    combined_xml = build_combined_xml(
+        today, all_dividend_results, all_shortma_results, all_overseas_results, trading_dates
+    )
+    if dry_run:
+        print('\n[DRY-RUN] 飞书云文档 XML(不写 latest_alert_combined.xml):')
+        print(combined_xml[:400] + '\n... (省略)' if len(combined_xml) > 400 else combined_xml)
+    else:
+        (ROOT / 'latest_alert_combined.xml').write_text(combined_xml, encoding='utf-8')
+        # 发飞书摘要卡片
+        doc_id = env.get('LARK_DOC_ID', '')
+        doc_url = f'https://www.feishu.cn/docx/{doc_id}' if doc_id else ''
+        summary_lines = build_feishu_summary_lines(
+            all_dividend_results, all_shortma_results, all_overseas_results
+        )
+        send_feishu_summary_card(
+            webhook_url=feishu_url,
+            title=f'📊 基金信号 · {today}',
+            summary_lines=summary_lines,
+            doc_url=doc_url,
+            log=log,
+        )
 
     log.info('====== 运行结束 ======')
     return 0

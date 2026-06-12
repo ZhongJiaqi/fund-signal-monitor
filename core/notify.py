@@ -26,6 +26,54 @@ def send_macos_notification(title: str, message: str) -> None:
         pass
 
 
+def send_feishu_summary_card(
+    webhook_url: str,
+    title: str,
+    summary_lines: list,
+    doc_url: str,
+    log: logging.Logger,
+) -> None:
+    """飞书摘要卡片(短 markdown + 1 个按钮跳云文档)。
+
+    取代原 send_feishu_bot 一次发 4 张长 markdown 卡片的做法——飞书移动端长卡片
+    强制折叠/分页(产品决策无法关闭),改成 1 张短摘要 + 按钮指向云文档,云文档
+    走 lark-cli XML 渲染表格(列宽可控,详见 cards.build_combined_xml)。
+
+    见 [[project-fund-signal-monitor-feishu-doc-migration]] (2026-06-12)。
+    """
+    if not webhook_url or not webhook_url.startswith('https://open.feishu.cn'):
+        return
+    payload = {
+        'msg_type': 'interactive',
+        'card': {
+            'schema': '2.0',
+            'header': {
+                'title': {'tag': 'plain_text', 'content': title[:200]},
+                'template': 'blue',
+            },
+            'body': {
+                'elements': [
+                    {'tag': 'markdown', 'content': '\n\n'.join(summary_lines)},
+                    {
+                        'tag': 'button',
+                        'text': {'tag': 'plain_text', 'content': '📋 查看完整表格'},
+                        'type': 'primary',
+                        'behaviors': [{'type': 'open_url', 'default_url': doc_url}],
+                    },
+                ],
+            },
+        },
+    }
+    try:
+        r = requests.post(webhook_url, json=payload, timeout=15)
+        body = r.json() if r.headers.get('content-type', '').startswith('application/json') else {}
+        code = body.get('code', 0)
+        if code not in (0, None):
+            log.warning(f'飞书摘要卡片推送返回非 0: {r.text[:200]}')
+    except Exception as e:
+        log.warning(f'飞书摘要卡片推送失败: {e}')
+
+
 def send_feishu_bot(webhook_url: str, title: str, desp: str, log: logging.Logger) -> None:
     """飞书自定义机器人推送(interactive 卡片包装现有 markdown)。
 

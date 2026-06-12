@@ -321,3 +321,168 @@ def build_ndx_summary_line(r: dict) -> str:
         f'  NDX(纳斯达克 100): 收盘 {fmt_num(r.get("close"), 2)} | '
         f'VIX {fmt_num(r.get("vix"), 2)} (阈值 {VIX_THRESHOLD:.0f}){err}'
     )
+
+
+# ===== 飞书云文档 XML 渲染(2026-06-12 起 ServerChan v2 切到飞书云文档) =====
+
+import re as _re
+
+
+def _xml_escape(s: str) -> str:
+    """转义 XML 文本内容(不动标签):& < > 三个字符。"""
+    return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def _md_state_to_xml(md: str) -> str:
+    """状态文字(markdown,含 **xxx**)转 XML 安全格式:先转义 + ** 转 <b>。"""
+    safe = _xml_escape(md)
+    return _re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', safe)
+
+
+def build_combined_xml(
+    today: date,
+    dividend_results: list,
+    shortma_results: list,
+    overseas_results: list,
+    trading_dates: "set[date] | None" = None,
+) -> str:
+    """构造飞书云文档完整 XML(用于 lark-cli docs +update overwrite)。
+
+    布局:title + blockquote(数据截至) + 3 个 h2 section,每段 = table(显式列宽)
+    + 规则段。设计依据见 [[project-fund-signal-monitor-feishu-doc-migration]] (2026-06-12)。
+    """
+    div_sorted = _sort_results(dividend_results, _dividend_event_kind)
+    sho_sorted = _sort_results(shortma_results, _shortma_event_kind)
+    osv_sorted = _sort_results(overseas_results, _shortma_event_kind)
+
+    out: list[str] = []
+    out.append('<title>📊 基金信号</title>')
+    out.append('')
+    out.append(f'<blockquote><p>数据截至 {today} · 每个 A 股交易日 10:00 北京自动更新</p></blockquote>')
+    out.append('')
+    out.append('<hr/>')
+    out.append('')
+
+    # ===== 红利低波 (4 列:基金 / 距 MA120 / 距 MA250 / 状态) =====
+    out.append('<h2>红利低波</h2>')
+    out.append('')
+    out.append('<table>')
+    out.append('<colgroup><col width="400"/><col width="90"/><col width="90"/><col width="220"/></colgroup>')
+    out.append('<thead><tr>'
+               '<th background-color="light-gray">基金</th>'
+               '<th background-color="light-gray">距 MA120</th>'
+               '<th background-color="light-gray">距 MA250</th>'
+               '<th background-color="light-gray">状态</th>'
+               '</tr></thead>')
+    out.append('<tbody>')
+    for asset, r in div_sorted:
+        ma120_pos = _pct_diff(r.get('close'), r.get('ma120'))
+        ma250_pos = _pct_diff(r.get('close'), r.get('ma250'))
+        state = _md_state_to_xml(_render_dividend_state_cell(r, trading_dates, today))
+        name = _xml_escape(asset.fund_name)
+        out.append(
+            f'<tr><td><code>{asset.fund_code}</code> {name}</td>'
+            f'<td>{ma120_pos}</td><td>{ma250_pos}</td><td>{state}</td></tr>'
+        )
+    out.append('</tbody>')
+    out.append('</table>')
+    out.append('')
+    out.append('<p><b>规则</b></p>')
+    out.append('<ul>')
+    out.append('<li>信号一(净值 &lt; MA250):加仓 1 份</li>')
+    out.append('<li>信号二(净值 &lt; MA120 × 0.94):加仓 1 份</li>')
+    out.append('<li>信号三(净值 &lt; MA120 × 0.88):加仓 2 份</li>')
+    out.append('</ul>')
+    out.append('')
+    out.append('<hr/>')
+    out.append('')
+
+    # ===== 科技-国内 (4 列:基金 / 板块 / 距 MA20 / 状态) =====
+    out.append('<h2>科技-国内</h2>')
+    out.append('')
+    out.append('<table>')
+    out.append('<colgroup><col width="350"/><col width="100"/><col width="80"/><col width="220"/></colgroup>')
+    out.append('<thead><tr>'
+               '<th background-color="light-gray">基金</th>'
+               '<th background-color="light-gray">板块</th>'
+               '<th background-color="light-gray">距 MA20</th>'
+               '<th background-color="light-gray">状态</th>'
+               '</tr></thead>')
+    out.append('<tbody>')
+    for asset, r in sho_sorted:
+        gap = _pct_diff(r.get('close'), r.get('ma20'))
+        sector = _xml_escape(getattr(asset, 'sector', '') or '')
+        state = _md_state_to_xml(_render_shortma_state_cell(r, trading_dates, today))
+        name = _xml_escape(asset.fund_name)
+        out.append(
+            f'<tr><td><code>{asset.fund_code}</code> {name}</td>'
+            f'<td>{sector}</td><td>{gap}</td><td>{state}</td></tr>'
+        )
+    out.append('</tbody>')
+    out.append('</table>')
+    out.append('')
+    out.append('<p><b>规则</b>:净值 &lt; MA20 视为短期超跌 · 有事件才推送</p>')
+    out.append('')
+    out.append('<hr/>')
+    out.append('')
+
+    # ===== 科技-海外 (3 列:基金 / 距 MA20 / 状态) =====
+    out.append('<h2>科技-海外</h2>')
+    out.append('')
+    out.append('<table>')
+    out.append('<colgroup><col width="420"/><col width="90"/><col width="220"/></colgroup>')
+    out.append('<thead><tr>'
+               '<th background-color="light-gray">基金</th>'
+               '<th background-color="light-gray">距 MA20</th>'
+               '<th background-color="light-gray">状态</th>'
+               '</tr></thead>')
+    out.append('<tbody>')
+    for asset, r in osv_sorted:
+        gap = _pct_diff(r.get('close'), r.get('ma20'))
+        state = _md_state_to_xml(_render_shortma_state_cell(r, trading_dates, today))
+        name = _xml_escape(asset.fund_name)
+        out.append(
+            f'<tr><td><code>{asset.fund_code}</code> {name}</td>'
+            f'<td>{gap}</td><td>{state}</td></tr>'
+        )
+    out.append('</tbody>')
+    out.append('</table>')
+    out.append('')
+    out.append('<p><b>规则</b>:净值 &lt; MA20 视为短期超跌 · 每日固定播报(无事件也推一份)</p>')
+
+    return '\n'.join(out)
+
+
+def build_feishu_summary_lines(
+    dividend_results: list,
+    shortma_results: list,
+    overseas_results: list,
+) -> list[str]:
+    """飞书摘要卡片用的 3 行通道速览(markdown 加粗 + emoji 计数)。"""
+    def _count(results, kind_fn) -> dict:
+        c = {'first': 0, 'new_low': 0, 'still_active': 0, 'near': 0, 'inactive': 0}
+        for _, r in results:
+            k = kind_fn(r)
+            if k in c:
+                c[k] += 1
+        return c
+
+    def _line(channel: str, c: dict) -> str:
+        parts = []
+        if c['first']:
+            parts.append(f'{c["first"]}🔴')
+        if c['new_low']:
+            parts.append(f'{c["new_low"]}⬇️')
+        if c['still_active']:
+            parts.append(f'{c["still_active"]}🟢')
+        if c['near']:
+            parts.append(f'{c["near"]}🟡')
+        if c['inactive']:
+            parts.append(f'{c["inactive"]}⚪')
+        return f'**{channel}** · {" ".join(parts) if parts else "—"}'
+
+    return [
+        _line('红利低波', _count(dividend_results, _dividend_event_kind)),
+        _line('科技-国内', _count(shortma_results, _shortma_event_kind)),
+        _line('科技-海外', _count(overseas_results, _shortma_event_kind)),
+    ]

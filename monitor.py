@@ -66,6 +66,7 @@ from core.data_io import (  # noqa: F401
 from core.notify import (  # noqa: F401
     SERVERCHAN_QUOTA_CODES,
     send_feishu_bot,
+    send_feishu_summary_card,
     send_macos_notification,
     send_serverchan,
 )
@@ -73,7 +74,9 @@ from core.cards import (  # noqa: F401
     DIVIDEND_RULE_FOOTER,
     NDX_RULE_FOOTER,
     SHORTMA_RULE_FOOTER,
+    build_combined_xml,
     build_dividend_card_md,
+    build_feishu_summary_lines,
     build_ndx_card_md,
     build_ndx_summary_line,
     build_shortma_card_md,
