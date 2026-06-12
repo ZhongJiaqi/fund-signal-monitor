@@ -1,8 +1,8 @@
 # 基金加仓信号监控
 
-每个交易日自动监控你关注的基金,触发预设加仓规则时推送到微信。**只做提醒,不下单。**
+每个交易日自动监控你关注的基金,触发预设加仓规则时推送通知。**只做提醒,不下单。**
 
-监控对象、阈值完全由你的 `config.json` 决定,代码里不含任何具体基金。支持 4 类通道:
+监控对象、阈值完全由你的 `config.json` 决定,代码里不含任何具体基金。支持 4 类信号通道:
 
 | 通道 | 数据口径 | 信号 | 推送规则 | 适用 |
 |---|---|---|---|---|
@@ -11,7 +11,14 @@
 | **shortma_overseas** | 单位净值 | MA20 单档 | **每日固定播报** | 海外 QDII / 跨境指数,每天扫一眼相对 MA20 位置 |
 | **ndx**(可选) | 指数点位 + VIX | VIX 超阈值(默认 30) | 仅 VIX 首次突破时推 | 借恐慌指数做美股恐慌加仓提醒 |
 
-4 类各走**独立**的 Server 酱微信推送,互不合并。海外通道是唯一"无事件也推"的——做日常状态汇报;其余三通道只在状态变化时推。
+## 推送通道选择(可二选一或并存)
+
+| 通道 | 触达 | 详情承载 | 备注 |
+|---|---|---|---|
+| **飞书**(2026-06-12 起默认推荐) | 飞书群机器人 webhook 发摘要卡片 + 按钮 | 飞书云文档原生渲染 3 张完整表格(列宽 / emoji / 板块独立列) | 自家飞书 API,无国内反爬风险;移动端 / 桌面端体验都好 |
+| **微信**(ServerChan v2,代码 + 凭证保留作备选) | 方糖服务号微信公众号收消息卡片 | 方糖直接渲染 markdown 表格在卡片里 | ⚠️ 当前 `sctapi.ftqq.com` 对 Cloudflare Workers + GitHub runner 出口都反爬(silent-fail / RST),想恢复使用需先验证或换 ServerChan³(`*.push.ft07.com`)。详见 [HANDOFF.md](HANDOFF.md) |
+
+两个**可以同时启用**也可以**单独启用**。`core/notify.py` 里 `send_feishu_summary_card` 和 `send_serverchan` 函数同时存在,`core/runner.py` `main()` 里按需选调谁(默认调飞书)。
 
 ## 快速开始
 
@@ -25,18 +32,61 @@ python3 -m venv .venv
 cp config.example.json config.json
 $EDITOR config.json
 
-# 2. 配置微信推送密钥(Server 酱:https://sct.ftqq.com)
+# 2. 配置推送凭证(.env)
 cp .env.example .env
 $EDITOR .env
+#   FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/<uuid>  (飞书必填)
+#   LARK_DOC_ID=<docx_token>                                                 (飞书云文档必填,见下方)
+#   SERVERCHAN_SENDKEY=SCT...                                                (微信可选)
 
-# 3. 先 dry-run 预览(不真发、不耗 Server 酱免费 5/天 额度)
+# 3. 先 dry-run 预览(不真发、不写 state.json)
 .venv/bin/python monitor.py --dry-run
 
-# 4. 确认无误后真实跑(会推到微信 + 弹 macOS 通知 + 写 state.json)
+# 4. 确认无误后真实跑(会推送 + 弹 macOS 通知 + 写 state.json)
 .venv/bin/python monitor.py
 ```
 
-> 改推送内容/卡片格式/信号阈值时,**先 `--dry-run` 用真实数据预览一遍**再走真实推送 —— 避免误推、浪费当日额度。
+> 改推送内容/卡片格式/信号阈值时,**先 `--dry-run` 用真实数据预览一遍**再走真实推送 —— 避免误推、浪费当日额度(微信 ServerChan 免费版每天 5 条限额)。
+
+### 飞书云文档(主通道详情承载,需 lark-cli)
+
+```bash
+# 1. 装飞书官方 CLI(自带云文档读写能力)
+npm install -g @larksuite/cli
+
+# 2. 飞书开放平台(https://open.feishu.cn)→ 开发者中心 → 创建企业自建应用
+#    应用权限 → 勾「查看、评论、编辑和管理云文档」+「发送群消息」
+#    凭证页拿 App ID + App Secret
+
+# 3. 非交互鉴权
+printf '%s' "$LARK_APP_SECRET" | lark-cli config init \
+  --app-id "$LARK_APP_ID" --app-secret-stdin --brand feishu --new
+
+# 4. 创建一份永久文档(只跑一次,记下 doc_id 写进 .env LARK_DOC_ID)
+lark-cli docs +create --title "📊 基金信号" --markdown "# 初始化" --as bot
+
+# 5. 之后 monitor.py 每天 overwrite 这个 doc_id
+lark-cli docs +update --doc "$LARK_DOC_ID" --command overwrite \
+  --content "@./latest_alert_combined.xml" --doc-format xml --as bot
+```
+
+GH Actions runner 上同样这套(workflow yaml 已封装)。需要 3 个 GH secret:`LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_DOC_ID`。
+
+### ServerChan 微信(备选,用前先验证反爬)
+
+```bash
+# 1. 拿 sendkey(https://sct.ftqq.com 注册 + 扫码绑微信公众号)
+echo 'SERVERCHAN_SENDKEY=SCT...' >> .env
+
+# 2. 在 core/runner.py main() 末尾把 send_feishu_summary_card 调用替换为 4 处
+#    send_serverchan(sendkey, title, md, log) (4 个通道独立调用)
+
+# 3. 必须先实测当前 sctapi 反爬状态是否影响你的出口 IP:
+curl --data-urlencode "title=测试" --data-urlencode "desp=链路测试" \
+  "https://sctapi.ftqq.com/$SERVERCHAN_SENDKEY.send"
+#   微信收到 → 链路通,继续用;
+#   返回 200+code:0 但微信没收到 → 反爬还在,无解,需换 ServerChan³
+```
 
 ## 配置 `config.json`
 
@@ -97,10 +147,11 @@ VIX 超过阈值(默认 30,恐慌区)→ 加仓提醒(不显示份数)。
 
 - 终端 markdown
 - `latest_alert_dividend.md` / `latest_alert_shortma.md` / `latest_alert_shortma_overseas.md` / `latest_alert_ndx.md`(对应通道推送时)
+- `latest_alert_combined.xml`(飞书云文档完整 3 张表的 XML,供 `lark-cli docs +update` 上传)
 - `latest_alert_errors.md`(取数失败诊断,不推送)
 - `run.log`(主程序日志)
 - `state.json`(状态对比,用于"首次激活才推送"机制)
-- macOS 通知 + **Server 酱微信推送**(各通道独立一条,海外每日固定一条)
+- macOS 通知 + **推送通道**(飞书摘要卡片 + 飞书云文档 / 或 ServerChan 微信推送,二选一/并存,见上方「推送通道选择」段)
 
 ## 定时调度
 
